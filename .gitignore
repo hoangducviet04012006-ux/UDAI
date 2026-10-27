@@ -1,0 +1,39 @@
+# ===== Python / backend =====
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.venv/
+venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+htmlcov/
+.coverage
+*.log
+
+# ===== Env & secrets =====
+.env
+.env.*
+!.env.example
+
+# ===== Dữ liệu sinh ra khi chạy =====
+# CSDL SQLite demo được tạo lại bằng: py -3.12 tests/init_db.py && py -3.12 tests/seed_data.py
+*.db
+*.sqlite3
+*.bak
+*.dump
+database/backup/
+database/backups/
+
+# ===== KT4: vector store sinh ra boi chatbot (index lai bang tests/ingest_knowledge.py) =====
+database/vectorstore/
+
+# ===== IDE / OS =====
+.idea/
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+.DS_Store
+Thumbs.db
+desktop.ini

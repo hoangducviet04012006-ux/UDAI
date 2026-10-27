@@ -1,0 +1,35 @@
+# =====================================================================
+# BaoHanhAI - KT4 (Chatbot): thu vien AI cho RAG (LangChain) + Agent (LangGraph)
+# ---------------------------------------------------------------------
+# TACH RIENG khoi backend/requirements.txt de:
+#   * Giu baseline KT2/KT3 nhe (fastapi + sqlalchemy + httpx) va van chay offline 100%.
+#   * Chatbot la module TU CHON: neu CHUA cai file nay, ung dung van khoi dong binh thuong
+#     (module chatbot se tu phat hien thieu thu vien va tra loi 503 thay vi crash app).
+#
+# Cai dat:
+#   .\dev.ps1 install-chat
+#   # hoac: py -3.12 -m pip install -r backend\requirements-ai-chat.txt
+#
+# Ghi chu: chi can cai khi trien khai cac phase P2..P5 cua chatbot (RAG + LangGraph).
+# Cac version da duoc GHIM KHOANG (>=x,<y) de tranh vo API khi thu vien cap nhat.
+# KHONG khai bao API key trong file nay - key chi doc tu bien moi truong (.env).
+# =====================================================================
+
+# --- LangChain: RAG (loader, text splitter, retriever, embeddings) ---
+langchain>=0.3.0,<0.4
+langchain-core>=0.3.0,<0.4
+langchain-community>=0.3.0,<0.4
+langchain-text-splitters>=0.3.0,<0.4
+
+# --- LangGraph: Agent dang StateGraph (router -> retrieve -> tools -> generate) ---
+langgraph>=0.2.0,<0.4
+
+# --- Tich hop LLM/Embedding theo chuan OpenAI (TUY CHON: chi dung khi co AI_API_KEY) ---
+langchain-openai>=0.2.0,<0.4
+
+# --- Vector store (offline, file cuc bo tai database/vectorstore/) + tinh toan vector ---
+faiss-cpu>=1.8.0
+numpy>=1.26.0,<3
+
+# --- Dem token phuc vu chunking va kiem soat chi phi (tuy chon) ---
+tiktoken>=0.7.0

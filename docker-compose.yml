@@ -1,0 +1,31 @@
+# =====================================================================
+# PostgreSQL 16 (TUỲ CHỌN) - dự án mặc định chạy SQLite demo tại
+# database/baohanh_ai.db nên không cần file này.
+#
+# Muốn dùng PostgreSQL thật:
+#   1) Copy-Item .env.example .env
+#   2) docker compose up -d db
+#   3) Nạp schema:  psql -U baohanh -d baohanh_ai -f database/postgres_schema.sql
+#   4) Bỏ comment DATABASE_URL trong backend/.env thành:
+#      DATABASE_URL=postgresql://baohanh:baohanh_dev_pw@localhost:5432/baohanh_ai
+# =====================================================================
+services:
+  db:
+    image: postgres:16
+    container_name: baohanh_db
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-baohanh}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-baohanh_dev_pw}
+      POSTGRES_DB: ${POSTGRES_DB:-baohanh_ai}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - baohanh_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-baohanh} -d ${POSTGRES_DB:-baohanh_ai}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+volumes:
+  baohanh_pgdata:
