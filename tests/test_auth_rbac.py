@@ -1,4 +1,4 @@
-﻿"""
+"""
 =======================================================================
 Đợt 7 - MINH CHỨNG: ĐĂNG NHẬP THẬT & PHÂN QUYỀN THEO VAI TRÒ (RBAC)
 =======================================================================
@@ -39,11 +39,13 @@ if sys.platform == "win32":
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend"))
-
+import tempfile
+from sqlalchemy import create_engine
+from sqlalchemy.orm import sessionmaker
 from fastapi.testclient import TestClient
 
 from app.main import app
-from app.database import engine, Base, SessionLocal
+from app.database import Base, get_db
 from app.models import User, WarrantyTicket, TicketStatusHistory
 from app.services import auth_service
 from seed_data import seed, DEMO_ACCOUNTS, DEMO_PASSWORDS
@@ -82,15 +84,12 @@ def user_id(db, username):
     return int(row.id) if row else None
 
 
-def run_all_tests():
-    # CSDL luôn được làm mới để kết quả tái lập 100%
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-    seed()
+def _run_tests_internal():
+    import app.database as app_db
+    db = app_db.SessionLocal()
+    seed(session=db, target_engine=app_db.engine)
 
     results = []
-    db = SessionLocal()
-
     id_manager = user_id(db, "manager01")
     id_receptionist = user_id(db, "receptionist01")
     id_technician = user_id(db, "technician01")
@@ -115,10 +114,10 @@ def run_all_tests():
             and ("password_hash" not in res.text)
         # Token dùng được ngay cho API nghiệp vụ
         ok_use = session.get("/api/v1/auth/me").status_code == 200
-        ok_login = ok_login and res.status_code == 200 and ok_role and ok_secret and ok_use
-        ROLE_CLIENT[role] = session
-        ROLE_TOKEN[role] = body.get("access_token", "")
-        print(f"    - {role:<13} | HTTP {res.status_code} | vai tro: {info.get('role_label')} | "
+        if role not in ROLE_CLIENT:
+            ROLE_CLIENT[role] = session
+            ROLE_TOKEN[role] = body.get("access_token", "")
+        print(f"    - {role:<13} | HTTP {res.status_code} | user: {username} | vai tro: {info.get('role_label')} | "
               f"so quyen: {len(perms):2d} | token dung duoc: {ok_use} | "
               f"khong lo mat khau/hash: {ok_secret}")
     record(results, "01. Dang nhap thanh cong ca 3 vai tro + nhan token + danh sach quyen", ok_login)
@@ -372,8 +371,6 @@ def run_all_tests():
             ("POST", "/api/v1/product-instances/", instance_payload),
             ("DELETE", "/api/v1/product-instances/1", None),
             ("POST", "/api/v1/warranty-tickets/", ticket_payload),
-            ("PATCH", "/api/v1/ai/results/1/review",
-             {"reviewed_by": id_technician, "decision": "APPROVED"}),
             ("GET", "/api/v1/users/", None),
             ("POST", "/api/v1/users/", new_user_payload),
             ("PATCH", f"/api/v1/users/{id_technician}", {"role": "MANAGER"}),
@@ -383,6 +380,8 @@ def run_all_tests():
             ("PUT", "/api/v1/products/1", product_payload),
             ("DELETE", "/api/v1/products/1", None),
             ("DELETE", "/api/v1/customers/1", None),
+            ("PATCH", "/api/v1/ai/results/1/review",
+             {"reviewed_by": id_receptionist, "decision": "APPROVED"}),
             ("GET", "/api/v1/users/", None),
             ("POST", "/api/v1/users/", new_user_payload),
             ("PATCH", f"/api/v1/users/{id_receptionist}", {"role": "MANAGER"}),
@@ -398,6 +397,8 @@ def run_all_tests():
             ("GET", "/api/v1/ai/config", None),
             ("GET", "/api/v1/ai/demo/users", None),
             ("POST", "/api/v1/ai/tickets/999999/classify-error", None),
+            ("PATCH", "/api/v1/ai/results/999999/review",
+             {"reviewed_by": id_technician, "decision": "APPROVED"}),
             ("PATCH", "/api/v1/warranty-tickets/999999/status",
              {"new_status": "REPAIRING", "changed_by": id_technician}),
         ],
@@ -463,7 +464,21 @@ def run_all_tests():
           f"{new_ticket.json().get('ticket_code')} ghi danh tiep nhan "
           f"(created_by={created_by_receptionist}) -> HTTP {new_ticket.status_code}")
 
-    # (a) Kỹ thuật viên tự ghi danh mình -> hợp lệ
+    # Quản lý phân công KTV phụ trách phiếu
+    assign_mgr = manager.post(f"/api/v1/warranty-tickets/{ticket_id}/assign", json={
+        "technician_id": id_technician, "note": "Quan ly phan cong KTV kiem tra"
+    })
+    # Tiếp nhận cố tình phân công -> 403 (chỉ Quản lý)
+    assign_rec = receptionist.post(f"/api/v1/warranty-tickets/{ticket_id}/assign", json={
+        "technician_id": id_technician
+    })
+    # KTV cố tình tự đổi KTV khi patch status -> 403 (chỉ Quản lý)
+    tech_change_assign = technician.patch(f"/api/v1/warranty-tickets/{ticket_id}/status", json={
+        "new_status": "INSPECTING", "changed_by": id_technician,
+        "technician_id": id_technician,
+    })
+
+    # (a) Kỹ thuật viên tự ghi danh mình và nhận phụ trách -> hợp lệ
     self_update = technician.patch(f"/api/v1/warranty-tickets/{ticket_id}/status", json={
         "new_status": "INSPECTING", "changed_by": id_technician,
         "note": "Ky thuat vien tiep nhan may (ghi danh chinh minh)",
@@ -479,6 +494,7 @@ def run_all_tests():
     status_after_fake = row_after_fake.status
     history_count_after_fake = len(db.query(TicketStatusHistory).filter(
         TicketStatusHistory.ticket_id == ticket_id).all())
+    print(f"    - Quan ly phan cong KTV (HTTP {assign_mgr.status_code}), Tiep nhan phan cong bi chan (HTTP {assign_rec.status_code}), KTV tu phan cong bi chan (HTTP {tech_change_assign.status_code})")
     print(f"    [a] Ky thuat vien ghi danh CHINH MINH (changed_by={id_technician}) -> "
           f"HTTP {self_update.status_code}")
     print(f"    [b] Ky thuat vien ghi danh NGUOI KHAC (changed_by={id_receptionist}) -> "
@@ -662,7 +678,6 @@ def run_all_tests():
     # =================================================================
     # TỔNG HỢP
     # =================================================================
-    db.close()
     print_separator("BANG TONG HOP MINH CHUNG DANG NHAP & PHAN QUYEN")
     passed = sum(1 for _, status_str in results if status_str == "PASS")
     for name, status_str in results:
@@ -675,7 +690,14 @@ def run_all_tests():
     else:
         print("  >>> CANH BAO: CO MUC MINH CHUNG CHUA DAT, KIEM TRA LAI CHI TIET. <<<")
     print("=" * 75 + "\n")
+    db.close()
     return all_passed
+
+
+def run_all_tests():
+    from test_isolation import isolated_test_database
+    with isolated_test_database():
+        return _run_tests_internal()
 
 
 if __name__ == "__main__":

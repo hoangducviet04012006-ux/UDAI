@@ -19,76 +19,62 @@ from app.services.auth_service import (
     PERM_TICKET_UPDATE_STATUS,
 )
 
-# Danh sách trạng thái đang mở theo Whitelist BR3
-# (phiếu đang mở = phiếu chưa trả máy xong cho khách, gồm cả WAITING_RETURN)
-OPEN_TICKET_STATUSES = ["RECEIVED", "INSPECTING", "REPAIRING", "WAITING_RETURN"]
+# Danh sách trạng thái đang mở theo quy định mới:
+# Một serial chỉ có 1 phiếu chưa đóng tại một thời điểm,
+# bao gồm cả phiếu Hoàn tất/Từ chối đang chờ trả máy.
+# Chỉ khi phiếu chuyển sang RETURNED (Đã trả máy) thì mới tính là đã đóng.
+OPEN_TICKET_STATUSES = ["RECEIVED", "INSPECTING", "REPAIRING", "COMPLETED", "REJECTED"]
 
-# Nhãn tiếng Việt của 6 trạng thái vòng đời phiếu (dùng thống nhất ở tài liệu & thông báo)
+# Nhãn tiếng Việt của 6 trạng thái vòng đời phiếu
 TICKET_STATUS_LABELS = {
-    "RECEIVED": "Mới tiếp nhận",
-    "INSPECTING": "Đang kiểm tra",
-    "REPAIRING": "Đang sửa chữa",
-    "WAITING_RETURN": "Chờ trả máy",
-    "COMPLETED": "Đã hoàn tất",
-    "REJECTED": "Từ chối bảo hành",
+    "RECEIVED": "Tiếp nhận",
+    "INSPECTING": "Kiểm tra",
+    "REPAIRING": "Sửa chữa",
+    "COMPLETED": "Hoàn tất",
+    "REJECTED": "Từ chối",
+    "RETURNED": "Đã trả máy",
 }
 
-# Ma trận chuyển trạng thái hợp lệ theo thiết kế KT1/KT2 (mở rộng đợt hoàn thiện)
-# Vòng đời thực tế của một phiếu bảo hành:
-#   RECEIVED -> INSPECTING -> REPAIRING -> WAITING_RETURN -> COMPLETED
-# Bắt buộc đi qua WAITING_RETURN: máy sửa xong vẫn phải "chờ trả máy" (đợi khách
-# tới nhận) rồi mới được đóng phiếu ở trạng thái COMPLETED.
+# Ma trận chuyển trạng thái hợp lệ theo yêu cầu nghiệp vụ chuẩn:
+# Luồng sửa chữa: RECEIVED -> INSPECTING -> REPAIRING -> COMPLETED -> RETURNED
+# Luồng từ chối : INSPECTING -> REJECTED -> RETURNED
+# Không chuyển tắt, không chuyển ngược, không mở lại phiếu đã đóng (RETURNED là terminal state).
 ALLOWED_TRANSITIONS = {
     "RECEIVED": ["INSPECTING"],
     "INSPECTING": ["REPAIRING", "REJECTED"],
-    "REPAIRING": ["WAITING_RETURN", "INSPECTING"],
-    "WAITING_RETURN": ["COMPLETED", "REPAIRING"],
-    "COMPLETED": [],
-    "REJECTED": []
+    "REPAIRING": ["COMPLETED"],
+    "COMPLETED": ["RETURNED"],
+    "REJECTED": ["RETURNED"],
+    "RETURNED": [],
 }
 
-
-# =====================================================================
-# [Đợt hoàn thiện nghiệp vụ] Hành động theo từng bước - nguồn sự thật DUY NHẤT
-# ---------------------------------------------------------------------
-# Mỗi chuyển trạng thái được mô tả bằng 1 bản ghi: nhãn nút người dùng thấy,
-# câu hỏi xác nhận, quyền cần có, và các thông tin nghiệp vụ cần ghi nhận.
-# Giao diện CHỈ hiển thị những gì backend trả về (`available_actions`) nên
-# không thể có nút "nhảy cóc" trạng thái.
-# =====================================================================
-STEP_STATUSES = ["RECEIVED", "INSPECTING", "REPAIRING", "WAITING_RETURN", "COMPLETED"]
-
-# Nhãn 5 bước xử lý thực tế (dùng cho thanh tiến trình ở màn hình phiếu)
+# Tiến trình 5 bước luồng sửa chữa (hiển thị trên màn hình phiếu)
 TICKET_STEPS: List[Dict[str, Any]] = [
     {"step": 1, "status": "RECEIVED", "label": "Tiếp nhận"},
     {"step": 2, "status": "INSPECTING", "label": "Kiểm tra"},
     {"step": 3, "status": "REPAIRING", "label": "Sửa chữa"},
-    {"step": 4, "status": "WAITING_RETURN", "label": "Chờ trả máy"},
-    {"step": 5, "status": "COMPLETED", "label": "Hoàn tất"},
+    {"step": 4, "status": "COMPLETED", "label": "Hoàn tất"},
+    {"step": 5, "status": "RETURNED", "label": "Đã trả máy"},
 ]
 
-# Câu mô tả NGẮN, KHÔNG mã kỹ thuật: nhân viên nhìn là biết phiếu đang ở đâu
-# và bước tiếp theo phải làm gì.
+# Mô tả ngắn gọn cho từng trạng thái
 TICKET_STATUS_HINTS: Dict[str, str] = {
-    "RECEIVED": "Máy đã được tiếp nhận tại quầy. Bước tiếp theo: chuyển máy vào phòng kiểm tra.",
-    "INSPECTING": "Kỹ thuật viên đang kiểm tra máy và cần ghi nhận kết luận chẩn đoán.",
-    "REPAIRING": "Máy đang được sửa chữa. Khi sửa xong, chuyển phiếu sang mục Chờ trả máy.",
-    "WAITING_RETURN": "Thiết bị đã sửa xong và đang chờ khách nhận máy.",
-    "COMPLETED": "Phiếu đã hoàn tất và thiết bị đã được bàn giao cho khách.",
-    "REJECTED": "Phiếu đã bị từ chối bảo hành (không thuộc phạm vi bảo hành).",
+    "RECEIVED": "Đã nhận máy và lập phiếu tại quầy. Cần phân công kỹ thuật viên để bắt đầu kiểm tra.",
+    "INSPECTING": "Kỹ thuật viên đang kiểm tra, xác định lỗi và điều kiện bảo hành.",
+    "REPAIRING": "Đang thực hiện sửa chữa thiết bị theo bảo hành.",
+    "COMPLETED": "Đã sửa xong, đã kiểm tra kết quả đạt yêu cầu, đang chờ khách nhận máy.",
+    "REJECTED": "Quản lý đã xác nhận từ chối bảo hành, có lý do, đang chờ trả máy cho khách.",
+    "RETURNED": "Đã bàn giao máy cho khách và đóng phiếu bảo hành.",
 }
 
 
 class BusinessRuleError(HTTPException):
     """
     Lỗi nghiệp vụ trả ra API.
-
-    - `detail`      : nội dung kỹ thuật (giữ nguyên định dạng cũ để không phá các
-                      minh chứng kiểm thử KT2/KT3 đang trích trường này).
-    - `user_message`: câu tiếng Việt thân thiện cho nhân viên; giao diện hiển thị
-                      trường này TRƯỚC TIÊN nên người dùng không thấy mã kỹ thuật.
-    - `error_code`  : mã nghiệp vụ ngắn (BR1..BR5, STATE_MACHINE, WORKFLOW_...).
-    - `hint`        : việc cần làm tiếp theo (nếu có).
+    - `detail`      : nội dung kỹ thuật (giữ định dạng để phục vụ kiểm thử).
+    - `user_message`: câu tiếng Việt thân thiện cho nhân viên.
+    - `error_code`  : mã nghiệp vụ ngắn.
+    - `hint`        : việc cần làm tiếp theo.
     """
 
     def __init__(
@@ -106,102 +92,80 @@ class BusinessRuleError(HTTPException):
 
 
 # Ma trận HÀNH ĐỘNG trên phiếu: nhãn nút + quyền + thông tin cần ghi nhận.
-# `fields`  : các trường nghiệp vụ giao diện cần hỏi người dùng khi xác nhận.
-# `requires_input`: phải có ít nhất một nội dung (ghi chú hoặc trường nghiệp vụ)
-#             mới cho chuyển bước -> chặn thao tác "bấm cho xong".
 TRANSITION_RULES: Dict[Tuple[str, str], Dict[str, Any]] = {
     ("RECEIVED", "INSPECTING"): {
         "target": "INSPECTING",
-        "button_label": "Chuyển sang kiểm tra",
-        "confirm_question": "Chuyển phiếu sang Đang kiểm tra?",
-        "description": "Đưa máy vào phòng kiểm tra để xác định nguyên nhân.",
+        "button_label": "Bắt đầu kiểm tra",
+        "confirm_question": "Bắt đầu chuyển phiếu sang Kiểm tra?",
+        "description": "Đưa máy vào kiểm tra. Bắt buộc phải có kỹ thuật viên phụ trách.",
         "permission": PERM_TICKET_UPDATE_STATUS,
         "style": "warning",
-        "fields": ["note"],
+        "fields": ["technician_id", "note"],
         "requires_input": False,
         "note_label": "Ghi chú tiếp nhận (không bắt buộc)",
-        "note_placeholder": "Ví dụ: Đã nhận máy tại quầy, chuyển kỹ thuật kiểm tra",
+        "note_placeholder": "Ví dụ: Đã nhận máy tại quầy, chuyển kỹ thuật viên kiểm tra",
     },
     ("INSPECTING", "REPAIRING"): {
         "target": "REPAIRING",
         "button_label": "Bắt đầu sửa chữa",
-        "confirm_question": "Chuyển phiếu sang Đang sửa chữa?",
-        "description": "Kỹ thuật viên đã có kết luận chẩn đoán và bắt đầu sửa chữa.",
+        "confirm_question": "Chuyển phiếu sang Sửa chữa?",
+        "description": "Bắt buộc có chẩn đoán và kết quả xác định đủ điều kiện bảo hành.",
         "permission": PERM_TICKET_UPDATE_STATUS,
         "style": "primary",
-        "fields": ["diagnosis_note", "error_category_id", "note"],
+        "fields": ["diagnosis_note", "error_category_id", "is_warranty_eligible", "warranty_check_note", "note"],
         "requires_input": True,
         "note_label": "Ghi chú kỹ thuật (không bắt buộc)",
-        "note_placeholder": "Ví dụ: Thay IC nguồn, vệ sinh tản nhiệt",
+        "note_placeholder": "Ví dụ: Đủ điều kiện bảo hành, tiến hành thay linh kiện",
     },
-    ("REPAIRING", "WAITING_RETURN"): {
-        "target": "WAITING_RETURN",
-        "button_label": "Sửa xong – Chờ trả máy",
-        "confirm_question": "Chuyển phiếu sang Chờ trả máy?",
-        "description": "Máy đã sửa xong và được đưa ra quầy chờ khách tới nhận.",
+    ("INSPECTING", "REJECTED"): {
+        "target": "REJECTED",
+        "button_label": "Xác nhận từ chối",
+        "confirm_question": "Xác nhận từ chối bảo hành phiếu này?",
+        "description": "Chỉ Quản lý xác nhận. Bắt buộc có lý do từ chối bảo hành.",
+        "permission": PERM_TICKET_REJECT,
+        "style": "danger",
+        "fields": ["rejection_reason", "note"],
+        "requires_input": True,
+        "note_label": "Lý do từ chối bảo hành (bắt buộc)",
+        "note_placeholder": "Ví dụ: Thiết bị vào nước, rơi vỡ, không thuộc phạm vi bảo hành",
+    },
+    ("REPAIRING", "COMPLETED"): {
+        "target": "COMPLETED",
+        "button_label": "Xác nhận hoàn tất",
+        "confirm_question": "Xác nhận sửa xong và chuyển sang Hoàn tất (chờ trả máy)?",
+        "description": "Bắt buộc có nội dung xử lý và kết quả kiểm tra sau sửa đạt yêu cầu.",
         "permission": PERM_TICKET_UPDATE_STATUS,
         "style": "primary",
-        "fields": ["repair_content", "repair_parts", "repair_note", "note"],
+        "fields": ["repair_content", "repair_parts", "repair_note", "repair_test_passed", "repair_test_note", "note"],
         "requires_input": True,
         "note_label": "Ghi chú bàn giao nội bộ (không bắt buộc)",
-        "note_placeholder": "Ví dụ: Máy chạy ổn định sau 2 giờ chạy thử",
+        "note_placeholder": "Ví dụ: Máy chạy thử ổn định 2 giờ, nhiệt độ tốt, sẵn sàng trả khách",
+    },
+    ("COMPLETED", "RETURNED"): {
+        "target": "RETURNED",
+        "button_label": "Xác nhận trả máy",
+        "confirm_question": "Xác nhận đã bàn giao máy cho khách và đóng phiếu?",
+        "description": "Bàn giao thiết bị đã sửa xong cho khách, lưu người trả và thời điểm trả.",
+        "permission": PERM_TICKET_HANDOVER,
+        "style": "success",
+        "fields": ["handover_note", "note"],
+        "requires_input": True,
+        "note_label": "Ghi chú khi bàn giao (không bắt buộc)",
+        "note_placeholder": "Ví dụ: Khách đã kiểm tra máy, nhận lại phiếu và linh kiện cũ",
+    },
+    ("REJECTED", "RETURNED"): {
+        "target": "RETURNED",
+        "button_label": "Xác nhận trả máy",
+        "confirm_question": "Xác nhận đã bàn giao trả lại máy từ chối bảo hành cho khách và đóng phiếu?",
+        "description": "Bàn giao trả lại máy từ chối cho khách, lưu người trả và thời điểm trả.",
+        "permission": PERM_TICKET_HANDOVER,
+        "style": "success",
+        "fields": ["handover_note", "note"],
+        "requires_input": True,
+        "note_label": "Ghi chú khi bàn giao (không bắt buộc)",
+        "note_placeholder": "Ví dụ: Đã giải thích lý do từ chối cho khách và bàn giao lại nguyên trạng máy",
     },
 }
-
-
-# Bổ sung 4 hành động còn lại của vòng đời phiếu (trả máy, sửa lại, kiểm tra lại, từ chối)
-TRANSITION_RULES.update(
-    {
-        ("WAITING_RETURN", "COMPLETED"): {
-            "target": "COMPLETED",
-            "button_label": "Xác nhận đã trả máy",
-            "confirm_question": "Xác nhận đã trả máy cho khách và hoàn tất phiếu?",
-            "description": "Máy đã được bàn giao cho khách; phiếu được đóng lại.",
-            "permission": PERM_TICKET_HANDOVER,
-            "style": "success",
-            "fields": ["handover_note", "note"],
-            "requires_input": True,
-            "note_label": "Ghi chú khi bàn giao (không bắt buộc)",
-            "note_placeholder": "Ví dụ: Khách đã kiểm tra máy và nhận lại kèm phiếu bảo hành",
-        },
-        ("WAITING_RETURN", "REPAIRING"): {
-            "target": "REPAIRING",
-            "button_label": "Khách báo còn lỗi – Sửa lại",
-            "confirm_question": "Chuyển phiếu về Đang sửa chữa?",
-            "description": "Khách kiểm tra và báo máy còn lỗi; máy được đưa lại xưởng.",
-            "permission": PERM_TICKET_UPDATE_STATUS,
-            "style": "warning",
-            "fields": ["note"],
-            "requires_input": True,
-            "note_label": "Lý do sửa lại (bắt buộc)",
-            "note_placeholder": "Ví dụ: Khách báo máy vẫn chập chờn sau khi nhận",
-        },
-        ("REPAIRING", "INSPECTING"): {
-            "target": "INSPECTING",
-            "button_label": "Cần kiểm tra lại",
-            "confirm_question": "Chuyển phiếu về Đang kiểm tra?",
-            "description": "Cần kiểm tra lại trước khi tiếp tục sửa chữa.",
-            "permission": PERM_TICKET_UPDATE_STATUS,
-            "style": "warning",
-            "fields": ["diagnosis_note", "note"],
-            "requires_input": True,
-            "note_label": "Lý do kiểm tra lại (bắt buộc)",
-            "note_placeholder": "Ví dụ: Nghi ngờ lỗi phát sinh ở bo mạch",
-        },
-        ("INSPECTING", "REJECTED"): {
-            "target": "REJECTED",
-            "button_label": "Từ chối bảo hành",
-            "confirm_question": "Từ chối bảo hành phiếu này?",
-            "description": "Thiết bị không thuộc phạm vi bảo hành; quyết định thuộc Quản lý.",
-            "permission": PERM_TICKET_REJECT,
-            "style": "danger",
-            "fields": ["rejection_reason", "note"],
-            "requires_input": True,
-            "note_label": "Lý do từ chối bảo hành (bắt buộc)",
-            "note_placeholder": "Ví dụ: Thiết bị vào nước, không thuộc phạm vi bảo hành",
-        },
-    }
-)
 
 
 def transition_rule(current_status: str, new_status: str) -> Optional[Dict[str, Any]]:
@@ -211,10 +175,7 @@ def transition_rule(current_status: str, new_status: str) -> Optional[Dict[str, 
 
 def available_transitions(current_status: str, has_permission_fn) -> List[Dict[str, Any]]:
     """
-    Danh sách hành động mà NGƯỜI ĐANG ĐĂNG NHẬP được phép thực hiện ở trạng thái hiện tại.
-
-    `has_permission_fn(permission_code) -> bool` do tầng router truyền vào; nhờ vậy
-    giao diện chỉ hiển thị nút có quyền và backend vẫn là nơi chặn thật.
+    Danh sách hành động mà người dùng được phép thực hiện ở trạng thái hiện tại.
     """
     actions: List[Dict[str, Any]] = []
     for (source_status, target_status), rule in TRANSITION_RULES.items():
@@ -244,7 +205,7 @@ def available_transitions(current_status: str, has_permission_fn) -> List[Dict[s
 def validate_br1_serial_exists(db: Session, serial_number: str) -> ProductInstance:
     """
     BR1: Serial sản phẩm phải tồn tại trong hệ thống.
-    Nếu không tìm thấy -> Thông báo lỗi và không tạo phiếu (không tạo REJECTED).
+    Nếu không tìm thấy -> Thông báo lỗi và không tạo phiếu.
     """
     instance = db.query(ProductInstance).filter(ProductInstance.serial_number == serial_number).first()
     if not instance:
@@ -261,40 +222,69 @@ def validate_br1_serial_exists(db: Session, serial_number: str) -> ProductInstan
     return instance
 
 
-def validate_br2_warranty_valid(instance: ProductInstance, check_date: Optional[date] = None) -> date:
+def check_instance_warranty_status(instance: ProductInstance, check_date: Optional[date] = None) -> Tuple[bool, int]:
     """
-    BR2: Sản phẩm phải còn thời hạn bảo hành tại thời điểm tiếp nhận.
-    Quy tắc: warranty_end_date >= check_date (tính bao gồm cả ngày kết thúc).
-    Nếu hết hạn -> Thông báo lỗi và không tạo phiếu.
+    Kiểm tra tình trạng bảo hành của thiết bị tại thời điểm check_date:
+    - Nếu thiếu ngày mua hoặc hạn bảo hành: raise BusinessRuleError (không tự lấy ngày tiếp nhận làm ngày mua).
+    - Trả về (is_valid, days_diff):
+      + is_valid=True: còn hạn (warranty_end_date >= check_date; ngày hết hạn vẫn được tính còn hạn), days_diff là số ngày còn lại.
+      + is_valid=False: hết hạn (warranty_end_date < check_date), days_diff là số ngày đã quá hạn.
     """
     if check_date is None:
         check_date = date.today()
 
+    if instance.purchase_date is None or instance.warranty_end_date is None:
+        raise BusinessRuleError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"[BR2 FAIL] Thiết bị '{instance.serial_number}' thiếu thông tin ngày mua / hạn bảo hành. Không thể tự lấy ngày tiếp nhận làm ngày mua.",
+            user_message=(
+                f"Thiết bị \"{instance.serial_number}\" chưa có thông tin ngày mua hợp lệ trong hồ sơ. "
+                "Hệ thống không tự ý lấy ngày tiếp nhận làm ngày mua, vui lòng cập nhật hồ sơ mua hàng của thiết bị trước."
+            ),
+            error_code="BR2_MISSING_PURCHASE_DATE",
+            hint="Kiểm tra hoá đơn hoặc giấy tờ mua hàng để cập nhật ngày mua chính xác.",
+        )
+
     if instance.warranty_end_date < check_date:
         days_expired = (check_date - instance.warranty_end_date).days
+        return False, days_expired
+    days_remaining = (instance.warranty_end_date - check_date).days
+    return True, days_remaining
+
+
+def validate_br2_warranty_valid(instance: ProductInstance, check_date: Optional[date] = None) -> date:
+    """
+    Kiểm tra máy còn hạn bảo hành (raise lỗi nếu hết hạn).
+    Dùng khi kiểm tra điều kiện sửa chữa theo diện bảo hành.
+    """
+    if check_date is None:
+        check_date = date.today()
+    is_valid, days_diff = check_instance_warranty_status(instance, check_date)
+    if not is_valid:
         raise BusinessRuleError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
                 f"[BR2 FAIL] Sản phẩm với serial '{instance.serial_number}' đã hết hạn bảo hành vào ngày "
-                f"{instance.warranty_end_date.strftime('%d/%m/%Y')} (đã quá hạn {days_expired} ngày so với ngày "
-                f"kiểm tra {check_date.strftime('%d/%m/%Y')}). Không tạo phiếu bảo hành."
+                f"{instance.warranty_end_date.strftime('%d/%m/%Y')} (đã quá hạn {days_diff} ngày so với ngày "
+                f"kiểm tra {check_date.strftime('%d/%m/%Y')}). Không được sửa chữa theo diện bảo hành."
             ),
             user_message=(
                 f"Thiết bị có số sê-ri \"{instance.serial_number}\" đã hết hạn bảo hành từ ngày "
-                f"{instance.warranty_end_date.strftime('%d/%m/%Y')} (quá hạn {days_expired} ngày), "
-                "nên không đủ điều kiện tiếp nhận bảo hành."
+                f"{instance.warranty_end_date.strftime('%d/%m/%Y')} (quá hạn {days_diff} ngày), "
+                "nên không đủ điều kiện sửa chữa bảo hành."
             ),
             error_code="BR2_WARRANTY_EXPIRED",
-            hint="Thông báo cho khách về tình trạng hết hạn bảo hành; nếu khách đồng ý có thể nhận sửa chữa tính phí (ngoài phạm vi phiếu bảo hành).",
+            hint="Chuyển hồ sơ sang luồng Từ chối bảo hành (INSPECTING -> REJECTED -> RETURNED).",
         )
     return check_date
 
 
 def validate_br3_no_open_tickets(db: Session, product_instance_id: int):
     """
-    BR3: Sản phẩm không được có phiếu bảo hành đang xử lý.
-    Các trạng thái đang mở theo whitelist: RECEIVED, INSPECTING, REPAIRING, WAITING_RETURN.
-    Nếu có -> Dừng và không tạo phiếu trùng.
+    BR3: Sản phẩm chỉ có một phiếu chưa đóng tại một thời điểm,
+    bao gồm cả phiếu Hoàn tất/Từ chối đang chờ trả.
+    Các trạng thái đang mở: RECEIVED, INSPECTING, REPAIRING, COMPLETED, REJECTED.
+    Chỉ khi phiếu trước đó đã chuyển sang RETURNED (Đã trả máy) thì mới được tạo phiếu mới.
     """
     open_ticket = db.query(WarrantyTicket).filter(
         WarrantyTicket.product_instance_id == product_instance_id,
@@ -302,6 +292,7 @@ def validate_br3_no_open_tickets(db: Session, product_instance_id: int):
     ).first()
 
     if open_ticket:
+        status_name = TICKET_STATUS_LABELS.get(open_ticket.status, open_ticket.status)
         raise BusinessRuleError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -309,19 +300,18 @@ def validate_br3_no_open_tickets(db: Session, product_instance_id: int):
                 f"Trạng thái hiện tại: '{open_ticket.status}'). Không tạo phiếu mới để tránh trùng lặp."
             ),
             user_message=(
-                f"Thiết bị này đang có phiếu bảo hành chưa hoàn tất: {open_ticket.ticket_code} "
-                f"({TICKET_STATUS_LABELS.get(open_ticket.status, open_ticket.status)}). "
-                "Mỗi thiết bị chỉ có một phiếu đang xử lý, vui lòng tiếp tục xử lý phiếu cũ thay vì lập phiếu mới."
+                f"Thiết bị này đang có phiếu bảo hành chưa đóng: {open_ticket.ticket_code} ({status_name}). "
+                "Mỗi thiết bị chỉ có một phiếu chưa đóng tại một thời điểm (kể cả phiếu đang chờ trả máy). "
+                "Vui lòng xử lý hoặc hoàn tất trả máy cho phiếu cũ trước khi lập phiếu mới."
             ),
             error_code="BR3_OPEN_TICKET_EXISTS",
-            hint=f"Mở phiếu {open_ticket.ticket_code} để cập nhật tình trạng thay vì tạo phiếu trùng.",
+            hint=f"Mở phiếu {open_ticket.ticket_code} để tiếp tục xử lý thay vì tạo phiếu trùng.",
         )
 
 
 def validate_br4_owner_verification(instance: ProductInstance, request_customer_id: int):
     """
-    BR4: Khách hàng/chủ sở hữu phải được xác minh phù hợp với thông tin sản phẩm.
-    Nếu khách hàng yêu cầu tiếp nhận không phải là chủ sở hữu đã đăng ký -> Dừng để xác minh.
+    BR4: Khách hàng yêu cầu tiếp nhận phải trùng khớp với chủ sở hữu đã đăng ký.
     """
     if instance.customer_id != request_customer_id:
         raise BusinessRuleError(
@@ -332,9 +322,8 @@ def validate_br4_owner_verification(instance: ProductInstance, request_customer_
                 f"Không tạo phiếu bảo hành."
             ),
             user_message=(
-                f"Khách hàng đang yêu cầu tiếp nhận không phải chủ sở hữu đã đăng ký của thiết bị "
-                f"\"{instance.serial_number}\". Vui lòng kiểm tra lại thông tin chủ sở hữu (giấy tờ mua hàng) "
-                "trước khi lập phiếu bảo hành."
+                f"Khách hàng yêu cầu tiếp nhận không phải chủ sở hữu đã đăng ký của thiết bị "
+                f"\"{instance.serial_number}\". Vui lòng kiểm tra lại thông tin chủ sở hữu trước khi lập phiếu bảo hành."
             ),
             error_code="BR4_OWNER_MISMATCH",
             hint="Đối chiếu lại thông tin chủ sở hữu thiết bị; chỉ chủ sở hữu đã đăng ký mới được tiếp nhận bảo hành.",
@@ -343,41 +332,36 @@ def validate_br4_owner_verification(instance: ProductInstance, request_customer_
 
 def validate_state_transition(current_status: str, new_status: str, rejection_reason: Optional[str] = None):
     """
-    Kiểm tra tính hợp lệ của việc chuyển trạng thái theo State Machine (6 trạng thái):
-    - RECEIVED -> INSPECTING
-    - INSPECTING -> REPAIRING hoặc REJECTED
-    - REPAIRING -> WAITING_RETURN (sửa xong, chờ trả máy) hoặc INSPECTING
-    - WAITING_RETURN -> COMPLETED (đã trả máy cho khách) hoặc REPAIRING (khách báo còn lỗi)
-    - COMPLETED / REJECTED là terminal state
-    - Không cho phép REPAIRING -> COMPLETED trực tiếp (bắt buộc đi qua WAITING_RETURN)
-      hoặc bất kỳ chuyển trạng thái nào ngoài ma trận.
-    Thông báo lỗi trả kèm nhãn tiếng Việt của trạng thái để người dùng dễ đọc.
+    Kiểm tra chuyển trạng thái theo State Machine chuẩn:
+    - TIẾP NHẬN -> KIỂM TRA -> SỬA CHỮA -> HOÀN TẤT -> ĐÃ TRẢ MÁY
+    - KIỂM TRA -> TỪ CHỐI -> ĐÃ TRẢ MÁY
+    - Không chuyển tắt, không chuyển ngược, không mở lại phiếu đã đóng.
     """
     allowed = ALLOWED_TRANSITIONS.get(current_status, [])
     if new_status not in allowed:
         current_label = TICKET_STATUS_LABELS.get(current_status, current_status)
         new_label = TICKET_STATUS_LABELS.get(new_status, new_status)
         allowed_labels = ", ".join(
-            code + " (" + TICKET_STATUS_LABELS.get(code, code) + ")" for code in allowed
-        ) or "Không có (đây là trạng thái kết thúc)"
+            f"{code} ({TICKET_STATUS_LABELS.get(code, code)})" for code in allowed
+        ) or "Không có (phiếu đã đóng)"
         rule = transition_rule(current_status, new_status)
-        if current_status == "REPAIRING" and new_status == "COMPLETED":
+        
+        if current_status == "REPAIRING" and new_status in ("RETURNED", "WAITING_RETURN"):
             user_message = (
-                "Chưa thể hoàn tất phiếu. Thiết bị vẫn đang ở trạng thái sửa chữa, "
-                "cần chuyển sang \"Chờ trả máy\" sau khi sửa xong, rồi mới xác nhận đã trả máy cho khách."
+                "Chưa thể trả máy. Thiết bị đang ở trạng thái Sửa chữa, "
+                "cần xác nhận Hoàn tất trước khi bàn giao trả máy cho khách."
             )
-            hint = "Bấm \"Sửa xong – Chờ trả máy\" trước, sau đó bấm \"Xác nhận đã trả máy\"."
+            hint = "Bấm \"Xác nhận hoàn tất\" trước, sau đó bấm \"Xác nhận trả máy\"."
+        elif current_status == "COMPLETED" and new_status == "REPAIRING":
+            user_message = "Không cho phép chuyển ngược phiếu từ Hoàn tất về Sửa chữa."
+            hint = "Quy trình không hỗ trợ chuyển ngược trạng thái."
         elif rule:
-            user_message = (
-                f"Không thực hiện được thao tác \"{rule['button_label']}\" vì phiếu đang ở trạng thái "
-                f"\"{current_label}\"."
-            )
+            user_message = f"Không thực hiện được thao tác \"{rule['button_label']}\" vì phiếu đang ở trạng thái \"{current_label}\"."
             hint = f"Trạng thái tiếp theo hợp lệ: {allowed_labels}."
         else:
-            user_message = (
-                f"Phiếu đang ở trạng thái \"{current_label}\" nên không thể chuyển sang \"{new_label}\"."
-            )
+            user_message = f"Phiếu đang ở trạng thái \"{current_label}\" nên không thể chuyển sang \"{new_label}\"."
             hint = f"Trạng thái tiếp theo hợp lệ: {allowed_labels}."
+
         raise BusinessRuleError(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=(
@@ -396,200 +380,204 @@ def validate_state_transition(current_status: str, new_status: str, rejection_re
             detail="[BR5 REQUIRED] Khi chuyển phiếu sang trạng thái REJECTED, bắt buộc phải cung cấp lý do từ chối (rejection_reason).",
             user_message="Vui lòng ghi rõ lý do từ chối bảo hành trước khi xác nhận.",
             error_code="BR5_REJECTION_REASON_REQUIRED",
-            hint="Ví dụ: Thiết bị vào nước, rơi vỡ, hoặc đã hết hạn bảo hành do khách cung cấp sai ngày mua.",
+            hint="Ví dụ: Thiết bị vào nước, rơi vỡ, hoặc không thuộc phạm vi bảo hành.",
         )
 
 
-# =====================================================================
-# [Đợt hoàn thiện nghiệp vụ] Điều kiện GHI NHẬN THÔNG TIN & ĐIỀU KIỆN HOÀN TẤT
-# ---------------------------------------------------------------------
-# Mục tiêu: không cho nhân viên "bấm cho xong" - mỗi bước sửa chữa/trả máy phải
-# kèm thông tin xử lý thật, và phiếu chỉ được đóng khi đã sửa xong + đã trả máy.
-# Các quy tắc này KHÔNG thay đổi BR1-BR5 cũng không thay đổi ma trận
-# ALLOWED_TRANSITIONS (vẫn phải đi qua WAITING_RETURN trước COMPLETED).
-# =====================================================================
-MIN_HISTORY_STEPS_BEFORE_COMPLETE = 4  # Tiếp nhận -> Kiểm tra -> Sửa chữa -> Chờ trả máy
+def validate_ticket_technician_assignment(ticket: WarrantyTicket, assigned_technician_id: Optional[int] = None):
+    """
+    Quy tắc: Trước khi chuyển sang Kiểm tra phải có kỹ thuật viên phụ trách.
+    """
+    effective_tech_id = assigned_technician_id or ticket.assigned_technician_id
+    if not effective_tech_id:
+        raise BusinessRuleError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="[WORKFLOW REQUIRED] Phiếu chưa có kỹ thuật viên phụ trách. Bắt buộc phân công kỹ thuật viên trước khi chuyển sang Kiểm tra.",
+            user_message="Phiếu chưa có kỹ thuật viên phụ trách. Vui lòng phân công kỹ thuật viên trước khi bắt đầu kiểm tra.",
+            error_code="WORKFLOW_TECH_REQUIRED",
+            hint="Chỉ định kỹ thuật viên phụ trách phiếu để tiếp tục.",
+        )
 
 
-def workflow_input_recorded(note: Optional[str], *values: Optional[str]) -> bool:
-    """True nếu có ít nhất một nội dung nghiệp vụ thật được ghi nhận."""
-    for candidate in (note,) + values:
-        if candidate and str(candidate).strip():
-            return True
-    return False
-
-
-def validate_transition_input(
-    current_status: str,
-    new_status: str,
-    note: Optional[str] = None,
+def validate_inspecting_to_repairing(
+    ticket: WarrantyTicket,
     diagnosis_note: Optional[str] = None,
+    is_warranty_eligible: Optional[bool] = None,
+):
+    """
+    Quy tắc: Kiểm tra -> Sửa chữa: phải có chẩn đoán và kết quả xác định đủ điều kiện bảo hành.
+    """
+    effective_diag = (diagnosis_note or "").strip() or (ticket.diagnosis_note or "").strip()
+    if not effective_diag:
+        raise BusinessRuleError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="[WORKFLOW REQUIRED] Chuyển sang SỬA CHỮA bắt buộc phải có chẩn đoán của kỹ thuật viên.",
+            user_message="Vui lòng ghi nhận kết luận chẩn đoán trước khi chuyển phiếu sang sửa chữa.",
+            error_code="WORKFLOW_DIAGNOSIS_REQUIRED",
+            hint="Ghi rõ hiện tượng hư hỏng và kết luận kỹ thuật.",
+        )
+
+    # [BR2]: Kiểm tra hạn bảo hành - Máy hết hạn KHÔNG được phép chuyển sang sửa chữa bảo hành
+    inst = ticket.product_instance
+    if inst:
+        ref_date = ticket.created_at.date() if ticket.created_at else date.today()
+        is_valid_warranty, days_diff = check_instance_warranty_status(inst, ref_date)
+        if not is_valid_warranty:
+            raise BusinessRuleError(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=(
+                    f"[BR2 FAIL] Thiết bị '{inst.serial_number}' đã hết hạn bảo hành từ ngày "
+                    f"{inst.warranty_end_date.strftime('%d/%m/%Y')} (quá hạn {days_diff} ngày). "
+                    "Không được phép chuyển sang SỬA CHỮA bảo hành. Phiếu phải chuyển qua luồng Từ chối bảo hành (INSPECTING -> REJECTED -> RETURNED)."
+                ),
+                user_message=(
+                    f"Thiết bị \"{inst.serial_number}\" đã hết hạn bảo hành từ ngày "
+                    f"{inst.warranty_end_date.strftime('%d/%m/%Y')} nên không đủ điều kiện sửa chữa bảo hành. "
+                    "Vui lòng đề xuất từ chối để Quản lý duyệt từ chối bảo hành."
+                ),
+                error_code="BR2_WARRANTY_EXPIRED",
+                hint="Kỹ thuật viên ghi đề xuất từ chối để Quản lý duyệt từ chối bảo hành.",
+            )
+
+    # Xác định điều kiện bảo hành: phải là True
+    effective_eligible = is_warranty_eligible if is_warranty_eligible is not None else ticket.is_warranty_eligible
+    if effective_eligible is not True:
+        raise BusinessRuleError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="[WORKFLOW REQUIRED] Chuyển sang SỬA CHỮA bắt buộc phải có kết quả xác định đủ điều kiện bảo hành (is_warranty_eligible=True).",
+            user_message="Thiết bị chưa được xác nhận đủ điều kiện bảo hành. Chỉ tiếp nhận sửa chữa khi đã xác định đủ điều kiện bảo hành.",
+            error_code="WORKFLOW_WARRANTY_ELIGIBLE_REQUIRED",
+            hint="Xác nhận đủ điều kiện bảo hành nếu lỗi thuộc diện được bảo hành, hoặc đề xuất từ chối nếu không thuộc phạm vi.",
+        )
+
+
+def validate_repairing_to_completed(
+    ticket: WarrantyTicket,
     repair_content: Optional[str] = None,
-    repair_parts: Optional[str] = None,
-    repair_note: Optional[str] = None,
+    repair_test_passed: Optional[bool] = None,
+    note: Optional[str] = None,
+):
+    """
+    Quy tắc: Sửa chữa -> Hoàn tất: phải có nội dung xử lý và kết quả kiểm tra sau sửa đạt yêu cầu.
+    """
+    effective_content = (repair_content or "").strip() or (ticket.repair_content or "").strip() or (note or "").strip()
+    if not effective_content:
+        raise BusinessRuleError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="[WORKFLOW REQUIRED] Chuyển sang HOÀN TẤT bắt buộc phải có nội dung xử lý sửa chữa.",
+            user_message="Vui lòng ghi nhận nội dung đã sửa chữa / linh kiện đã thay trước khi chuyển sang Hoàn tất.",
+            error_code="WORKFLOW_REPAIR_CONTENT_REQUIRED",
+            hint="Ghi ngắn gọn việc đã sửa và linh kiện thay thế.",
+        )
+
+    effective_test_passed = repair_test_passed if repair_test_passed is not None else ticket.repair_test_passed
+    if effective_test_passed is not True:
+        raise BusinessRuleError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="[WORKFLOW REQUIRED] Chuyển sang HOÀN TẤT bắt buộc phải có kết quả kiểm tra sau sửa đạt yêu cầu (repair_test_passed=True).",
+            user_message="Chưa xác nhận kết quả kiểm tra sau sửa đạt yêu cầu. Vui lòng chạy thử và xác nhận đạt yêu cầu trước khi chuyển Hoàn tất.",
+            error_code="WORKFLOW_REPAIR_TEST_REQUIRED",
+            hint="Kiểm tra chạy thử thiết bị và tích chọn kết quả kiểm tra đạt yêu cầu.",
+        )
+
+
+def validate_to_returned(
+    ticket: WarrantyTicket,
+    actor: User,
     handover_note: Optional[str] = None,
-) -> None:
+    note: Optional[str] = None,
+):
     """
-    Bắt buộc mỗi bước nghiệp vụ phải kèm thông tin xử lý (ghi chú hoặc dữ liệu chuyên môn).
-
-    Không áp dụng cho bước từ chối bảo hành vì lý do từ chối đã bắt buộc ở BR5.
+    Quy tắc: Hoàn tất/Từ chối -> Đã trả máy: phải xác nhận bàn giao, lưu người trả và thời điểm trả.
+    Chỉ Tiếp nhận hoặc Quản lý được xác nhận trả máy.
     """
-    rule = transition_rule(current_status, new_status)
-    if not rule or not rule.get("requires_input") or new_status == "REJECTED":
-        return
+    if actor.role == "TECHNICIAN":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Kỹ thuật viên không có quyền xác nhận trả máy cho khách. Việc này thuộc quầy tiếp nhận hoặc quản lý.",
+        )
 
-    if workflow_input_recorded(
-        note, diagnosis_note, repair_content, repair_parts, repair_note, handover_note
-    ):
-        return
+    effective_handover = (handover_note or "").strip() or (note or "").strip() or (ticket.handover_note or "").strip()
+    if not effective_handover:
+        raise BusinessRuleError(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="[WORKFLOW REQUIRED] Xác nhận trả máy bắt buộc phải ghi nhận thông tin / ghi chú bàn giao cho khách.",
+            user_message="Vui lòng ghi thông tin bàn giao (tình trạng máy khi trả, người nhận máy) trước khi đóng phiếu.",
+            error_code="WORKFLOW_HANDOVER_REQUIRED",
+            hint="Ví dụ: Khách đã kiểm tra máy, ký biên bản nhận lại máy.",
+        )
 
-    message_by_target = {
-        "INSPECTING": "Vui lòng ghi lại lý do cần kiểm tra lại trước khi chuyển bước.",
-        "REPAIRING": (
-            "Vui lòng ghi kết luận chẩn đoán (hoặc ghi chú kỹ thuật) trước khi chuyển phiếu "
-            "sang \"Đang sửa chữa\"."
-        ),
-        "WAITING_RETURN": (
-            "Vui lòng ghi nội dung đã sửa chữa (hoặc ghi chú kỹ thuật) trước khi chuyển phiếu "
-            "sang \"Chờ trả máy\" để biết máy đã được xử lý những gì."
-        ),
-        "COMPLETED": (
-            "Vui lòng ghi thông tin bàn giao (người nhận máy / tình trạng máy khi trả) "
-            "trước khi hoàn tất phiếu."
-        ),
-    }
-    raise BusinessRuleError(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail=(
-            f"[WORKFLOW INPUT REQUIRED] Chuyển trạng thái {current_status} -> {new_status} "
-            "thiếu thông tin xử lý (note/diagnosis_note/repair_content/handover_note)."
-        ),
-        user_message=message_by_target.get(
-            new_status, "Vui lòng ghi thông tin xử lý trước khi chuyển bước tiếp theo."
-        ),
-        error_code="WORKFLOW_INPUT_REQUIRED",
-        hint=rule.get("note_placeholder") or "Ghi ngắn gọn việc đã làm để người sau tiếp tục xử lý.",
-    )
+
+def validate_ticket_actor_access(ticket: WarrantyTicket, actor: User, is_technical: bool = False):
+    """
+    Kiểm tra quyền theo từng phiếu:
+    - Tiếp nhận: Không được làm thao tác kỹ thuật (chẩn đoán, sửa chữa, kết luận lỗi).
+    - Kỹ thuật viên: Chỉ được thao tác trên phiếu được phân công cho mình.
+    - Quản lý: Chỉ thao tác trong trung tâm bảo hành được phân công.
+    """
+    if actor.role == "RECEPTIONIST" and is_technical:
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail=f"Nhân viên tiếp nhận '{actor.username}' không được phép thực hiện thao tác kỹ thuật (chẩn đoán, sửa chữa, kết luận lỗi).",
+        )
+    if actor.role == "TECHNICIAN":
+        if ticket.assigned_technician_id is None:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Phiếu chưa có kỹ thuật viên phụ trách. Kỹ thuật viên '{actor.username}' chỉ được thao tác trên phiếu được giao cho mình.",
+            )
+        if ticket.assigned_technician_id != actor.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Kỹ thuật viên '{actor.username}' không được thao tác trên phiếu của kỹ thuật viên khác (phiếu đang giao cho nhân viên ID {ticket.assigned_technician_id}).",
+            )
+    if actor.role == "MANAGER":
+        if ticket.service_center_id and actor.service_center_id and ticket.service_center_id != actor.service_center_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Quản lý không thuộc trung tâm bảo hành tiếp nhận phiếu này.",
+            )
 
 
 def completion_blockers(db: Session, ticket: WarrantyTicket) -> List[str]:
-    """
-    Danh sách lý do TIẾNG VIỆT vì sao phiếu chưa thể hoàn tất (rỗng = được phép hoàn tất).
-
-    Kiểm tra theo đúng yêu cầu nghiệp vụ: phiếu tồn tại -> thiết bị tồn tại ->
-    khách hàng tồn tại -> đang ở "Chờ trả máy" -> đã ghi nhận thông tin sửa chữa ->
-    lịch sử có đủ các bước xử lý.
-    """
+    """Danh sách lý do vì sao phiếu chưa thể trả máy / đóng phiếu."""
     if ticket is None:
         return ["Không tìm thấy phiếu bảo hành."]
 
     blockers: List[str] = []
     status_label = TICKET_STATUS_LABELS.get(ticket.status, ticket.status)
 
-    if ticket.product_instance is None:
-        blockers.append("Không tìm thấy thiết bị của phiếu nên không thể xác nhận đã trả máy.")
-
-    if ticket.customer is None:
-        blockers.append("Không tìm thấy khách hàng của phiếu nên không thể xác nhận đã trả máy.")
-
-    if ticket.status != "WAITING_RETURN":
+    if ticket.status not in ("COMPLETED", "REJECTED"):
         blockers.append(
-            f"Thiết bị đang ở trạng thái \"{status_label}\" nên chưa thể hoàn tất. "
-            "Hãy sửa xong và chuyển phiếu sang \"Chờ trả máy\" trước khi trả máy cho khách."
+            f"Thiết bị đang ở trạng thái \"{status_label}\". Phiếu phải ở Hoàn tất hoặc Từ chối mới được xác nhận trả máy."
         )
 
-    history = list(ticket.status_history or [])
-    if len(history) < MIN_HISTORY_STEPS_BEFORE_COMPLETE:
-        blockers.append(
-            "Phiếu chưa ghi nhận đủ các bước xử lý (Tiếp nhận → Kiểm tra → Sửa chữa → Chờ trả máy)."
-        )
-
-    if not _has_repair_info(ticket):
-        blockers.append(
-            "Chưa có thông tin sửa chữa (nội dung đã sửa hoặc ghi chú kỹ thuật) nên chưa thể hoàn tất phiếu."
-        )
+    if ticket.status == "COMPLETED":
+        if not ticket.repair_content and not ticket.repair_note:
+            blockers.append("Chưa ghi nhận nội dung sửa chữa của thiết bị.")
+        if ticket.repair_test_passed is not True:
+            blockers.append("Chưa xác nhận kết quả kiểm tra sau sửa đạt yêu cầu.")
 
     return blockers
 
 
-def _has_repair_info(ticket: WarrantyTicket) -> bool:
-    """Đã có thông tin sửa chữa chưa (dữ liệu cột hoặc ghi chú ở bước chuyển sang Chờ trả máy)."""
-    repair_history_note = next(
-        (
-            row.note
-            for row in reversed(list(ticket.status_history or []))
-            if row.to_status == "WAITING_RETURN" and row.note
-        ),
-        None,
-    )
-    return (
-        workflow_input_recorded(ticket.repair_content, ticket.repair_note, repair_history_note)
-        or ticket.repair_at is not None
-    )
-
-
 def completion_checklist(ticket: WarrantyTicket) -> List[Dict[str, Any]]:
-    """Điều kiện hoàn tất kèm trạng thái đạt/chưa đạt để hiển thị trên màn hình phiếu."""
+    """Điều kiện trả máy thực tế để hiển thị trên màn hình phiếu (loại bỏ chi tiết kỹ thuật hệ thống)."""
     if ticket is None:
         return []
-    history = list(ticket.status_history or [])
+    is_ready_status = ticket.status in ("COMPLETED", "REJECTED")
+    has_repair = bool(ticket.repair_content or ticket.repair_note)
+    test_passed = ticket.repair_test_passed is True
+
     return [
-        {
-            "key": "ticket_exists",
-            "label": "Phiếu bảo hành tồn tại",
-            "satisfied": True,
-        },
-        {
-            "key": "device_exists",
-            "label": "Thiết bị của phiếu tồn tại",
-            "satisfied": ticket.product_instance is not None,
-        },
-        {
-            "key": "customer_exists",
-            "label": "Khách hàng của phiếu tồn tại",
-            "satisfied": ticket.customer is not None,
-        },
-        {
-            "key": "status_waiting_return",
-            "label": "Thiết bị đang ở trạng thái \"Chờ trả máy\"",
-            "satisfied": ticket.status == "WAITING_RETURN",
-        },
-        {
-            "key": "repair_info",
-            "label": "Đã ghi nhận thông tin sửa chữa",
-            "satisfied": _has_repair_info(ticket),
-        },
-        {
-            "key": "history_steps",
-            "label": "Lịch sử đã có đủ các bước xử lý",
-            "satisfied": len(history) >= MIN_HISTORY_STEPS_BEFORE_COMPLETE,
-        },
+        {"key": "assigned_tech", "label": "Đã có kỹ thuật viên phụ trách", "satisfied": ticket.assigned_technician_id is not None},
+        {"key": "status_ready", "label": "Thiết bị ở trạng thái Hoàn tất hoặc Từ chối", "satisfied": is_ready_status},
+        {"key": "repair_info", "label": "Đã ghi nhận nội dung sửa chữa (với sửa chữa)", "satisfied": has_repair or ticket.status == "REJECTED"},
+        {"key": "test_passed", "label": "Đã kiểm tra sau sửa đạt yêu cầu (với sửa chữa)", "satisfied": test_passed or ticket.status == "REJECTED"},
     ]
 
 
-def validate_ticket_completion(db: Session, ticket: WarrantyTicket) -> None:
-    """Chặn hoàn tất phiếu khi chưa đủ điều kiện; thông báo lỗi bằng tiếng Việt dễ hiểu."""
-    blockers = completion_blockers(db, ticket)
-    if not blockers:
-        return
-    raise BusinessRuleError(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="[WORKFLOW COMPLETE BLOCKED] " + " | ".join(blockers),
-        user_message=blockers[0],
-        error_code="WORKFLOW_COMPLETE_BLOCKED",
-        hint="Hoàn tất các bước còn thiếu rồi xác nhận lại.",
-    )
-
-
-# =====================================================================
-# [AUD-06] Kiểm tra sự tồn tại của các đối tượng được tham chiếu qua FK.
-# ---------------------------------------------------------------------
-# Trước đây API chấp nhận `service_center_id` / `created_by` / `changed_by`
-# không tồn tại (ví dụ 999999) và ghi thẳng vào CSDL. Hai hàm dưới đây chỉ
-# kiểm tra SỰ TỒN TẠI, KHÔNG thay đổi BR1-BR4, State Machine hay AI-01.
-# =====================================================================
 def validate_service_center_exists(db: Session, service_center_id: int) -> ServiceCenter:
-    """Kiểm tra trung tâm bảo hành tồn tại (404 nếu không có)."""
     center = db.query(ServiceCenter).filter(ServiceCenter.id == service_center_id).first()
     if not center:
         raise HTTPException(
@@ -600,7 +588,6 @@ def validate_service_center_exists(db: Session, service_center_id: int) -> Servi
 
 
 def validate_user_exists(db: Session, user_id: int, user_label: str = "nhân viên") -> User:
-    """Kiểm tra người dùng hệ thống tồn tại (404 nếu không có)."""
     user = db.query(User).filter(User.id == user_id).first()
     if not user:
         raise HTTPException(
@@ -611,34 +598,22 @@ def validate_user_exists(db: Session, user_id: int, user_label: str = "nhân vi�
 
 
 def validate_error_category_exists(db: Session, category_id: int) -> ErrorCategory:
-    """
-    Kiểm tra nhãn loại lỗi tồn tại trước khi ghi vào phiếu.
-
-    Dùng cho cả 2 đường: kỹ thuật viên kết luận loại lỗi, và nhân viên xét duyệt
-    gợi ý của AI (AI không tự ghi nhãn - xem KT3 phần human-in-the-loop).
-    """
     category = db.query(ErrorCategory).filter(ErrorCategory.id == category_id).first()
     if not category:
         raise BusinessRuleError(
             status_code=status.HTTP_404_NOT_FOUND,
             detail=f"Không tìm thấy nhãn loại lỗi với ID: {category_id}.",
-            user_message=(
-                "Không tìm thấy loại lỗi đã chọn. Vui lòng chọn lại loại lỗi trong danh sách."
-            ),
+            user_message="Không tìm thấy loại lỗi đã chọn. Vui lòng chọn lại loại lỗi trong danh sách.",
             error_code="ERROR_CATEGORY_NOT_FOUND",
-            hint="Chọn một nhãn lỗi đang hiển thị trong mục \"Loại lỗi\" của phiếu.",
+            hint="Chọn một nhãn lỗi trong danh sách.",
         )
     return category
 
 
 def add_months_to_date(source_date: date, months: int) -> date:
-    """
-    Hàm tính ngày hết hạn bảo hành chuẩn xác theo lịch (tránh sai số do lấy 30 ngày/tháng).
-    """
     month = source_date.month - 1 + months
     year = source_date.year + month // 12
     month = month % 12 + 1
-    # Xử lý trường hợp ngày cuối tháng (ví dụ 31/01 + 1 tháng -> 28/02)
     import calendar
     max_day_in_month = calendar.monthrange(year, month)[1]
     day = min(source_date.day, max_day_in_month)
@@ -652,11 +627,6 @@ def detailed_debug_warranty(
     warranty_duration_months: Optional[int] = None,
     check_date: Optional[date] = None
 ) -> Dict[str, Any]:
-    """
-    Chức năng Debug kiểm tra hạn bảo hành chuyên sâu phục vụ yêu cầu KT2:
-    - Phân tích ngày mua, thời gian bảo hành, ngày hết hạn tính toán vs ngày hết hạn đóng băng.
-    - Kiểm tra các lỗi phổ biến: Lỗi Timezone, Lỗi so sánh >= hay >, Lỗi ngày cuối tháng/năm nhuận.
-    """
     traces = []
     if check_date is None:
         check_date = date.today()
@@ -695,7 +665,7 @@ def detailed_debug_warranty(
         traces.append(f"[Step 4] Ngày kết thúc BH đóng băng trong DB: {frozen_end_date}. Ngày kết thúc BH tính toán lại: {calculated_end_date}.")
         
         if frozen_end_date != calculated_end_date:
-            traces.append(f"[Trace WARNING] Có sự chênh lệch giữa ngày đóng băng ({frozen_end_date}) và ngày tính lại ({calculated_end_date}) do gia hạn hoặc điều chỉnh hợp đồng.")
+            traces.append(f"[Trace WARNING] Có sự chênh lệch giữa ngày đóng băng ({frozen_end_date}) và ngày tính lại ({calculated_end_date}).")
     else:
         traces.append("[Step 2] Chế độ kiểm tra độc lập (Standalone simulation không dùng serial DB).")
         if not purchase_date or not warranty_duration_months:
@@ -717,13 +687,12 @@ def detailed_debug_warranty(
         frozen_end_date = calculated_end_date
         traces.append(f"[Step 3] Ngày mua: {purchase_date}, Thời hạn: {warranty_duration_months} tháng -> Ngày hết hạn: {calculated_end_date}.")
 
-    # So sánh điều kiện bảo hành BR2
     effective_end_date = frozen_end_date if frozen_end_date else calculated_end_date
     delta_days = (effective_end_date - check_date).days
     is_valid = (effective_end_date >= check_date)
 
     traces.append(f"[Step 5] Đối chiếu BR2: effective_end_date ({effective_end_date}) >= check_date ({check_date}) -> {is_valid}")
-    traces.append(f"[Step 6] Chênh lệch số ngày: {delta_days} ngày. (Dương: còn hạn, Âm: quá hạn)")
+    traces.append(f"[Step 6] Chênh lệch số ngày: {delta_days} ngày. (Dương/0: còn hạn, Âm: quá hạn)")
 
     if is_valid:
         status_msg = f"CÒN HẠN BẢO HÀNH (Còn {delta_days} ngày)"

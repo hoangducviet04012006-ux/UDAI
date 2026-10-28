@@ -12,8 +12,8 @@ APP_DIR = os.path.dirname(os.path.abspath(__file__))   # <root>/backend/app
 BACKEND_DIR = os.path.dirname(APP_DIR)                 # <root>/backend
 BASE_DIR = os.path.dirname(BACKEND_DIR)                # <root>
 
-# Nạp biến môi trường từ backend/.env (nếu có). Trước đây file .env không được đọc
-# vì thiếu load_dotenv => mọi thay đổi trong .env không có tác dụng.
+# Nạp biến môi trường từ root .env hoặc backend/.env (nếu có)
+load_dotenv(os.path.join(BASE_DIR, ".env"))
 load_dotenv(os.path.join(BACKEND_DIR, ".env"))
 
 # CSDL SQLite demo nằm trong database/ và dùng ĐƯỜNG DẪN TUYỆT ĐỐI:
@@ -64,6 +64,9 @@ class Settings(BaseModel):
     #   * OFFLINE-FIRST: mặc định provider "mock" + embedding "hash" => không cần API key.
     #   * API key CHỈ đọc từ biến môi trường (AI_API_KEY/OPENAI_API_KEY), không hard-code.
     #   * CHATBOT_ENABLED=false => router chatbot trả 503; KHÔNG ảnh hưởng KT2/KT3.
+    # Router hỗ trợ dùng enabled/provider/max_turns/max_context_chars. Các thiết lập embedding,
+    # vector và prompt phía dưới là nền tảng cũ, chưa được module này sử dụng.
+    # Xác minh mã bí mật luôn bắt buộc, không cho phép tắt bằng cấu hình.
     chatbot_enabled: bool = os.getenv("CHATBOT_ENABLED", "True").lower() in ("true", "1", "yes")
     chatbot_provider: str = os.getenv("CHATBOT_PROVIDER", os.getenv("AI_PROVIDER", "mock"))
     chatbot_embedding_provider: str = os.getenv("CHATBOT_EMBEDDING_PROVIDER", "hash")

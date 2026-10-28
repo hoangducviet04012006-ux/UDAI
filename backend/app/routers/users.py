@@ -13,7 +13,7 @@ Ràng buộc an toàn:
 """
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import func
 from sqlalchemy.orm import Session
 
@@ -59,16 +59,49 @@ def _assert_service_center(db: Session, service_center_id: Optional[int]) -> Non
 
 
 @router.get(
+    "",
+    response_model=schemas.StaffUserListResponse,
+    summary="Danh sách tài khoản nhân viên",
+    dependencies=[Depends(require_permissions(PERM_USER_VIEW))],
+    include_in_schema=False,
+)
+@router.get(
     "/",
     response_model=schemas.StaffUserListResponse,
     summary="Danh sách tài khoản nhân viên",
     dependencies=[Depends(require_permissions(PERM_USER_VIEW))],
 )
-def list_users(db: Session = Depends(get_db)):
-    users = db.query(User).order_by(User.role.asc(), User.username.asc()).all()
+def list_users(
+    search: Optional[str] = Query(None, description="Tìm theo tên đăng nhập, họ tên, email, SĐT"),
+    role: Optional[str] = Query(None, description="Lọc theo vai trò"),
+    active: Optional[bool] = Query(None, description="Lọc theo trạng thái hoạt động"),
+    db: Session = Depends(get_db),
+):
+    query = db.query(User)
+    if search:
+        s = f"%{search.strip().lower()}%"
+        query = query.filter(
+            func.lower(User.username).like(s)
+            | func.lower(User.full_name).like(s)
+            | func.lower(func.coalesce(User.email, "")).like(s)
+            | func.lower(func.coalesce(User.phone, "")).like(s)
+        )
+    if role and role != "ALL":
+        query = query.filter(User.role == role)
+    if active is not None:
+        query = query.filter(User.active == active)
+    users = query.order_by(User.role.asc(), User.username.asc()).all()
     return schemas.StaffUserListResponse(total=len(users), items=[_serialize(u) for u in users])
 
 
+@router.post(
+    "",
+    response_model=schemas.StaffUserResponse,
+    status_code=status.HTTP_201_CREATED,
+    summary="Tạo tài khoản nhân viên",
+    dependencies=[Depends(require_permissions(PERM_USER_MANAGE))],
+    include_in_schema=False,
+)
 @router.post(
     "/",
     response_model=schemas.StaffUserResponse,

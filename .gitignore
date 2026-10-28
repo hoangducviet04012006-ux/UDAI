@@ -37,3 +37,4 @@ database/vectorstore/
 .DS_Store
 Thumbs.db
 desktop.ini
+tests/temp_chrome_profile/

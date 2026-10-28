@@ -24,6 +24,7 @@ import base64
 import hashlib
 import hmac
 import json
+import os
 import secrets
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -129,28 +130,34 @@ ROLE_PERMISSIONS: Dict[str, frozenset] = {
             PERM_USER_MANAGE,
         }
     ),
-    # NHÂN VIÊN TIẾP NHẬN: tiếp nhận máy, lập phiếu, chăm sóc khách, xác nhận gợi ý AI,
-    # và xác nhận trả máy cho khách (việc tại quầy). KHÔNG ghi chẩn đoán/sửa chữa của kỹ thuật.
+    # NHÂN VIÊN TIẾP NHẬN: tiếp nhận máy, lập phiếu, chăm sóc khách,
+    # và xác nhận trả máy cho khách (việc tại quầy). KHÔNG xác nhận loại lỗi / chẩn đoán / sửa chữa của kỹ thuật.
     ROLE_RECEPTIONIST: _COMMON_PERMISSIONS
     | frozenset(
         {
             PERM_TICKET_CREATE,
             PERM_TICKET_UPDATE_STATUS,
             PERM_TICKET_HANDOVER,
-            PERM_AI_REVIEW,
             PERM_CUSTOMER_CREATE,
             PERM_CUSTOMER_UPDATE,
             PERM_DEVICE_MANAGE,
         }
     ),
-    # KỸ THUẬT VIÊN: xử lý máy (kiểm tra -> chẩn đoán -> sửa chữa -> chờ trả máy);
+    # KỸ THUẬT VIÊN: xử lý máy (kiểm tra -> xác nhận loại lỗi -> chẩn đoán -> sửa chữa -> hoàn tất);
     # KHÔNG tiếp nhận/xóa dữ liệu, KHÔNG quyết định từ chối bảo hành, KHÔNG trả máy cho khách.
     ROLE_TECHNICIAN: _COMMON_PERMISSIONS
-    | frozenset({PERM_TICKET_UPDATE_STATUS, PERM_TICKET_DIAGNOSE, PERM_TICKET_REPAIR}),
+    | frozenset(
+        {
+            PERM_TICKET_UPDATE_STATUS,
+            PERM_TICKET_DIAGNOSE,
+            PERM_TICKET_REPAIR,
+            PERM_AI_REVIEW,
+        }
+    ),
 }
 
-# Vai trò được xác nhận kết quả AI (human-in-the-loop) - dùng chung với KT3.
-ALLOWED_REVIEW_ROLES: Tuple[str, ...] = (ROLE_MANAGER, ROLE_RECEPTIONIST)
+# Vai trò được xác nhận kết quả AI (human-in-the-loop) - KTV phụ trách hoặc Quản lý.
+ALLOWED_REVIEW_ROLES: Tuple[str, ...] = (ROLE_MANAGER, ROLE_TECHNICIAN)
 
 
 def permissions_for_role(role: Optional[str]) -> List[str]:
@@ -203,7 +210,7 @@ MENU_DEFINITIONS: List[Dict[str, str]] = [
         "icon": "file-text",
         "permission": PERM_TICKET_VIEW,
         "group": MENU_WORK,
-        "hint": "Tiếp nhận máy mới, tra cứu phiếu và cập nhật tiến độ xử lý",
+        "hint": "Tiếp nhận bảo hành, tra cứu phiếu và cập nhật tiến độ xử lý",
     },
     {
         "tab": "lookup",
@@ -255,25 +262,54 @@ MENU_DEFINITIONS: List[Dict[str, str]] = [
     },
 ]
 
-# Với vai trò nào thì (những) màn hình nào được xếp lại vào nhóm nào.
-MENU_GROUP_OVERRIDES: Dict[str, Dict[str, str]] = {
-    ROLE_TECHNICIAN: {
-        "customers": MENU_REFERENCE,
-        "products": MENU_REFERENCE,
-        "devices": MENU_REFERENCE,
-    },
+# Cấu hình danh mục menu hiển thị theo vai trò (navigation tabs).
+# Kỹ thuật viên chỉ giữ đúng 4 mục: Tổng quan, Phiếu bảo hành, Tra cứu bảo hành, Hỗ trợ xác định lỗi.
+# Quản lý & Tiếp nhận giữ nguyên danh mục làm việc hiện có.
+# Áp dụng cho mọi tài khoản theo vai trò (technician01, technician02, tài khoản tạo sau), không hardcode username.
+ROLE_NAV_TABS: Dict[str, Tuple[str, ...]] = {
+    ROLE_MANAGER: (
+        "dashboard",
+        "tickets",
+        "lookup",
+        "ai",
+        "customers",
+        "products",
+        "devices",
+        "accounts",
+    ),
+    ROLE_RECEPTIONIST: (
+        "dashboard",
+        "tickets",
+        "lookup",
+        "ai",
+        "customers",
+        "products",
+        "devices",
+    ),
+    ROLE_TECHNICIAN: (
+        "dashboard",
+        "tickets",
+        "lookup",
+        "ai",
+    ),
 }
+
+# Với vai trò nào thì (những) màn hình nào được xếp lại vào nhóm phụ (nếu có).
+MENU_GROUP_OVERRIDES: Dict[str, Dict[str, str]] = {}
 
 
 def navigation_for_role(role: Optional[str]) -> List[Dict[str, str]]:
     """
-    Menu của một vai trò (đã lọc theo quyền) - giao diện vẽ lại đúng danh sách này.
+    Menu của một vai trò (đã lọc theo cấu hình vai trò và quyền) - giao diện vẽ lại đúng danh sách này.
 
     Trả về mỗi mục: tab, label, icon, group, group_label, hint, permission.
     """
     granted = ROLE_PERMISSIONS.get(role or "", frozenset())
+    allowed_tabs = ROLE_NAV_TABS.get(role or "")
     items: List[Dict[str, str]] = []
     for menu in MENU_DEFINITIONS:
+        if allowed_tabs is not None and menu["tab"] not in allowed_tabs:
+            continue
         if menu["permission"] not in granted:
             continue
         group = MENU_GROUP_OVERRIDES.get(role or "", {}).get(menu["tab"], menu["group"])
@@ -303,7 +339,15 @@ PASSWORD_HASH_PREFIX = "pbkdf2_sha256"
 # Giá trị placeholder cũ trong tests/seed_data.py (không phải hash thật) - cần nâng cấp.
 LEGACY_PASSWORD_HASH_PLACEHOLDER = "pbkdf2:sha256:dummyhash123"
 
-MIN_PASSWORD_LENGTH = 8
+# Tài khoản demo & mật khẩu khởi tạo (phục vụ môi trường phát triển / đồ án)
+DEMO_CREDENTIALS: Dict[str, str] = {
+    "manager01": "123456",
+    "receptionist01": "123456",
+    "technician01": "123456",
+    "technician02": "123456",
+}
+
+MIN_PASSWORD_LENGTH = 6
 
 
 def hash_password(password: str, iterations: Optional[int] = None) -> str:
@@ -544,26 +588,76 @@ require_authenticated = get_current_user
 # =====================================================================
 # 6. Đăng nhập & quy tắc "người thực hiện" (chống khai khống nhân viên)
 # =====================================================================
+def is_demo_mode_enabled() -> bool:
+    """
+    Kiểm tra chế độ demo có được bật rõ ràng hay không.
+    Chỉ khi biến môi trường DEMO_MODE hoặc ENABLE_DEMO_ACCOUNTS được đặt là 1/true/yes/on thì mới bật.
+    """
+    flag = os.getenv("DEMO_MODE", os.getenv("ENABLE_DEMO_ACCOUNTS", "")).strip().lower()
+    return flag in ("1", "true", "yes", "on")
+
+
 def authenticate(db: Session, username: str, password: str) -> Tuple[Optional[User], str]:
     """
     Kiểm tra thông tin đăng nhập.
 
     Trả về (user, "") nếu hợp lệ; ngược lại (None, lý do) - lý do chỉ dùng cho log nội bộ,
     KHÔNG trả ra ngoài (tránh dò tài khoản tồn tại hay không).
+    TUYỆT ĐỐI KHÔNG strip mật khẩu của người dùng.
     """
     username = (username or "").strip()
-    if not username or not password:
+    if not username or password is None or password == "":
         return None, "missing_credentials"
     user = db.query(User).filter(func.lower(User.username) == username.lower()).first()
     if not user:
         return None, "user_not_found"
+
+    norm_user = (user.username or "").lower()
+
+    # Nâng cấp tự động nếu CSDL cũ lưu placeholder/hash giả và CHỈ KHI chế độ demo được bật rõ ràng.
+    # KHÔNG tự đặt lại mật khẩu đã được người dùng thay đổi (chỉ kích hoạt khi is_legacy_hash = True).
     if is_legacy_hash(user.password_hash):
-        return None, "password_not_configured"
+        if is_demo_mode_enabled() and norm_user in DEMO_CREDENTIALS and password == DEMO_CREDENTIALS[norm_user]:
+            user.password_hash = hash_password(password)
+            user.active = True
+            db.commit()
+            db.refresh(user)
+        else:
+            return None, "password_not_configured"
+
+    # Kiểm tra mật khẩu nguyên bản (KHÔNG strip)
     if not verify_password(password, user.password_hash):
         return None, "bad_password"
+
     if not user.active:
         return None, "inactive_user"
     return user, ""
+
+
+def ensure_demo_accounts_configured(db: Session, force: bool = False) -> int:
+    """
+    Tự động nâng cấp mật khẩu cho các tài khoản demo nếu CSDL cũ còn lưu hash giả/placeholder,
+    và CHỈ thực hiện khi chế độ demo được bật rõ ràng (DEMO_MODE=True) hoặc force=True.
+
+    Nguyên tắc an toàn:
+    * CHỈ cập nhật bản ghi tài khoản demo (manager01, receptionist01, technician01).
+    * CHỈ cập nhật khi bản ghi đang có hash giả/cũ (is_legacy_hash = True).
+    * TUYỆT ĐỐI KHÔNG ghi đè mật khẩu hợp lệ mà người dùng đã chủ động đổi.
+    * Trả về số tài khoản vừa được nâng cấp.
+    """
+    if not force and not is_demo_mode_enabled():
+        return 0
+
+    upgraded = 0
+    for demo_user, demo_pass in DEMO_CREDENTIALS.items():
+        account = db.query(User).filter(func.lower(User.username) == demo_user).first()
+        if account and is_legacy_hash(account.password_hash):
+            account.password_hash = hash_password(demo_pass)
+            account.active = True
+            upgraded += 1
+    if upgraded:
+        db.commit()
+    return upgraded
 
 
 def ensure_actor_allowed(

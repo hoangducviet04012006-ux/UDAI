@@ -20,7 +20,7 @@ Cách làm (backend là nguồn sự thật):
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from sqlalchemy import func
+from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.crud import warranty_tickets as crud_tickets
@@ -58,9 +58,9 @@ STATUS_TONES: Dict[str, str] = {
     "RECEIVED": "blue",
     "INSPECTING": "amber",
     "REPAIRING": "purple",
-    "WAITING_RETURN": "cyan",
     "COMPLETED": "emerald",
     "REJECTED": "rose",
+    "RETURNED": "slate",
 }
 
 # ------------------------------ Thẻ số liệu -------------------------------
@@ -71,34 +71,34 @@ CARD_DEFS: Dict[str, Dict[str, str]] = {
         "tone": "slate",
     },
     "RECEIVED": {
-        "label": "Mới tiếp nhận",
-        "description": "Máy vừa nhận tại quầy, chưa chuyển kiểm tra",
+        "label": "Tiếp nhận",
+        "description": "Máy vừa nhận tại quầy, chờ KTV kiểm tra",
         "tone": STATUS_TONES["RECEIVED"],
     },
     "INSPECTING": {
-        "label": "Đang kiểm tra",
-        "description": "Kỹ thuật viên đang xác định nguyên nhân",
+        "label": "Kiểm tra",
+        "description": "KTV đang xác định nguyên nhân & điều kiện bảo hành",
         "tone": STATUS_TONES["INSPECTING"],
     },
     "REPAIRING": {
-        "label": "Đang sửa chữa",
-        "description": "Máy đang nằm trên bàn sửa chữa",
+        "label": "Sửa chữa",
+        "description": "Máy đang trong quá trình sửa chữa",
         "tone": STATUS_TONES["REPAIRING"],
     },
-    "WAITING_RETURN": {
-        "label": "Chờ trả máy",
-        "description": "Đã sửa xong, chờ khách tới nhận",
-        "tone": STATUS_TONES["WAITING_RETURN"],
-    },
     "COMPLETED": {
-        "label": "Đã hoàn tất",
-        "description": "Đã bàn giao máy cho khách",
+        "label": "Hoàn tất",
+        "description": "Đã sửa xong đạt yêu cầu, chờ khách nhận máy",
         "tone": STATUS_TONES["COMPLETED"],
     },
     "REJECTED": {
-        "label": "Từ chối bảo hành",
-        "description": "Không thuộc phạm vi bảo hành",
+        "label": "Từ chối",
+        "description": "Không đủ điều kiện bảo hành, chờ trả máy",
         "tone": STATUS_TONES["REJECTED"],
+    },
+    "RETURNED": {
+        "label": "Đã trả máy",
+        "description": "Đã bàn giao cho khách, đóng phiếu",
+        "tone": STATUS_TONES["RETURNED"],
     },
     "CUSTOMERS": {
         "label": "Khách hàng",
@@ -113,28 +113,26 @@ CARD_DEFS: Dict[str, Dict[str, str]] = {
 }
 
 # ------------------------------ Nhóm công việc ----------------------------
-# `scope`: ALL  = việc chung của trung tâm (máy đang chờ ở quầy/bàn kỹ thuật,
-#                bất kỳ ai đúng vai trò đều có thể nhận)
+# `scope`: ALL  = việc chung của trung tâm
 #          MINE = việc mà chính người đang đăng nhập đang phụ trách
-# `action_target` / `action_label`: câu chữ nút hành động theo VAI TRÒ cho các
-# phiếu trong nhóm (hành động thật vẫn do backend kiểm tra quyền khi gọi API).
+# `action_target` / `action_label`: câu chữ nút hành động theo VAI TRÒ
 WORK_GROUPS: Dict[str, List[Dict[str, Any]]] = {
     ROLE_MANAGER: [
         {
             "key": "received",
-            "label": "Mới tiếp nhận",
+            "label": "Tiếp nhận",
             "statuses": ["RECEIVED"],
             "scope": "ALL",
-            "description": "Phiếu mới tại quầy, cần chuyển kỹ thuật kiểm tra.",
+            "description": "Phiếu mới tại quầy, cần phân công KTV kiểm tra.",
             "action_target": "INSPECTING",
-            "action_label": "Chuyển sang kiểm tra",
+            "action_label": "Phân công / Kiểm tra",
         },
         {
             "key": "inspecting",
             "label": "Đang kiểm tra",
             "statuses": ["INSPECTING"],
             "scope": "ALL",
-            "description": "Kỹ thuật viên đang xác định nguyên nhân lỗi.",
+            "description": "KTV đang xác định lỗi & điều kiện bảo hành; duyệt từ chối nếu có đề xuất.",
             "action_target": None,
             "action_label": "Xem tiến độ",
         },
@@ -143,25 +141,34 @@ WORK_GROUPS: Dict[str, List[Dict[str, Any]]] = {
             "label": "Đang sửa chữa",
             "statuses": ["REPAIRING"],
             "scope": "ALL",
-            "description": "Máy đang sửa; theo dõi tiến độ và linh kiện thay thế.",
+            "description": "Máy đang sửa; theo dõi tiến độ và kiểm tra sau sửa.",
             "action_target": None,
             "action_label": "Xem tiến độ",
         },
         {
-            "key": "waiting_return",
-            "label": "Chờ trả máy",
-            "statuses": ["WAITING_RETURN"],
-            "scope": "ALL",
-            "description": "Máy đã sửa xong, đang chờ khách tới nhận.",
-            "action_target": "COMPLETED",
-            "action_label": "Xác nhận đã trả máy",
-        },
-        {
             "key": "completed",
-            "label": "Đã hoàn tất",
+            "label": "Hoàn tất (Chờ trả)",
             "statuses": ["COMPLETED"],
             "scope": "ALL",
-            "description": "Phiếu đã bàn giao xong cho khách.",
+            "description": "Máy đã sửa xong đạt yêu cầu, đang chờ khách tới nhận.",
+            "action_target": "RETURNED",
+            "action_label": "Xác nhận trả máy",
+        },
+        {
+            "key": "rejected",
+            "label": "Từ chối (Chờ trả)",
+            "statuses": ["REJECTED"],
+            "scope": "ALL",
+            "description": "Không tiếp nhận bảo hành, đang chờ trả máy cho khách.",
+            "action_target": "RETURNED",
+            "action_label": "Xác nhận trả máy",
+        },
+        {
+            "key": "returned",
+            "label": "Đã trả máy",
+            "statuses": ["RETURNED"],
+            "scope": "ALL",
+            "description": "Phiếu đã bàn giao xong cho khách, đã đóng.",
             "action_target": None,
             "action_label": "Xem phiếu",
         },
@@ -171,37 +178,46 @@ WORK_GROUPS: Dict[str, List[Dict[str, Any]]] = {
             "key": "to_receive",
             "label": "Cần tiếp nhận",
             "statuses": ["RECEIVED"],
-            "scope": "ALL",
-            "description": "Máy đang ở quầy: chuyển vào phòng kiểm tra.",
-            "action_target": "INSPECTING",
-            "action_label": "Chuyển vào phòng kiểm tra",
+            "scope": "MINE",
+            "description": "Máy vừa nhận tại quầy, chờ Quản lý phân công KTV kiểm tra.",
+            "action_target": None,
+            "action_label": "Xem phiếu",
         },
         {
             "key": "processing",
-            "label": "Đang xử lý",
+            "label": "Đang xử lý kỹ thuật",
             "statuses": ["INSPECTING", "REPAIRING"],
             "scope": "ALL",
-            "description": "Máy đang được kỹ thuật kiểm tra/sửa — dùng khi khách gọi hỏi.",
+            "description": "Máy đang được KTV kiểm tra/sửa — dùng khi khách hỏi thông tin.",
             "action_target": None,
-            "action_label": "Xem tiến độ để trả lời khách",
+            "action_label": "Xem tiến độ",
         },
         {
-            "key": "waiting_return",
-            "label": "Chờ trả máy",
-            "statuses": ["WAITING_RETURN"],
-            "scope": "ALL",
-            "description": "Gọi khách tới nhận máy rồi xác nhận đã trả máy.",
-            "action_target": "COMPLETED",
-            "action_label": "Xác nhận đã trả máy",
+            "key": "completed_return",
+            "label": "Chờ trả máy (Hoàn tất)",
+            "statuses": ["COMPLETED"],
+            "scope": "MINE",
+            "description": "Máy sửa xong đạt yêu cầu, bàn giao cho khách và đóng phiếu.",
+            "action_target": "RETURNED",
+            "action_label": "Xác nhận trả máy",
+        },
+        {
+            "key": "rejected_return",
+            "label": "Chờ trả máy (Từ chối)",
+            "statuses": ["REJECTED"],
+            "scope": "MINE",
+            "description": "Phiếu bị từ chối bảo hành, bàn giao trả máy lại cho khách.",
+            "action_target": "RETURNED",
+            "action_label": "Xác nhận trả máy",
         },
     ],
     ROLE_TECHNICIAN: [
         {
-            "key": "waiting_inspect",
-            "label": "Chờ kiểm tra",
+            "key": "assigned_received",
+            "label": "Phiếu được giao",
             "statuses": ["RECEIVED"],
-            "scope": "ALL",
-            "description": "Máy đã tiếp nhận tại quầy, cần đưa vào bàn kiểm tra.",
+            "scope": "MINE",
+            "description": "Máy được phân công cho bạn, bắt đầu kiểm tra.",
             "action_target": "INSPECTING",
             "action_label": "Bắt đầu kiểm tra",
         },
@@ -210,71 +226,68 @@ WORK_GROUPS: Dict[str, List[Dict[str, Any]]] = {
             "label": "Đang kiểm tra",
             "statuses": ["INSPECTING"],
             "scope": "MINE",
-            "description": "Ghi kết luận chẩn đoán rồi chuyển sang sửa chữa.",
+            "description": "Chẩn đoán lỗi & điều kiện bảo hành, hoặc đề xuất từ chối.",
             "action_target": "REPAIRING",
-            "action_label": "Cập nhật kết quả kiểm tra",
+            "action_label": "Cập nhật kiểm tra",
         },
         {
             "key": "repairing",
             "label": "Đang sửa chữa",
             "statuses": ["REPAIRING"],
             "scope": "MINE",
-            "description": "Sửa xong thì chuyển phiếu sang \"Chờ trả máy\".",
-            "action_target": "WAITING_RETURN",
-            "action_label": "Cập nhật sửa chữa",
+            "description": "Ghi nội dung sửa, kiểm tra sau sửa đạt yêu cầu rồi xác nhận hoàn tất.",
+            "action_target": "COMPLETED",
+            "action_label": "Xác nhận hoàn tất",
         },
         {
-            "key": "waiting_profile",
-            "label": "Chờ hoàn thiện hồ sơ",
-            "statuses": ["WAITING_RETURN"],
+            "key": "completed",
+            "label": "Đã hoàn tất",
+            "statuses": ["COMPLETED"],
             "scope": "MINE",
-            "description": "Đã sửa xong — máy chờ khách nhận, quầy sẽ bàn giao.",
+            "description": "Đã sửa xong đạt yêu cầu; quầy tiếp nhận sẽ bàn giao cho khách.",
             "action_target": None,
-            "action_label": "Xem thông tin trả máy",
+            "action_label": "Xem phiếu",
+        },
+        {
+            "key": "rejected",
+            "label": "Đã từ chối",
+            "statuses": ["REJECTED"],
+            "scope": "MINE",
+            "description": "Phiếu đã từ chối bảo hành; quầy tiếp nhận sẽ bàn giao lại máy cho khách.",
+            "action_target": None,
+            "action_label": "Xem phiếu",
         },
     ],
 }
 
 # ---------------------- Bố cục bảng điều khiển theo vai trò ----------------
-# `focus_order`: thứ tự "Việc cần làm" theo nghiệp vụ của từng vai trò.
-# `show_attention`: chỉ Quản lý có khối "Việc cần chú ý".
 ROLE_LAYOUT: Dict[str, Dict[str, Any]] = {
     ROLE_MANAGER: {
         "title": "Tổng quan trung tâm",
         "subtitle": "Toàn bộ tình hình tiếp nhận và xử lý bảo hành trong ngày.",
-        "cards": [
-            "TOTAL",
-            "RECEIVED",
-            "INSPECTING",
-            "REPAIRING",
-            "WAITING_RETURN",
-            "COMPLETED",
-            "REJECTED",
-            "CUSTOMERS",
-            "DEVICES",
-        ],
-        "focus_order": ["RECEIVED", "REPAIRING", "WAITING_RETURN", "INSPECTING"],
+        "cards": ["TOTAL", "IN_PROGRESS", "WAITING_RETURN", "RETURNED"],
+        "focus_order": ["RECEIVED", "INSPECTING", "REPAIRING", "COMPLETED", "REJECTED"],
         "show_attention": True,
-        "table_title": "Phiếu đang xử lý (toàn hệ thống)",
+        "table_title": "Phiếu đang xử lý (toàn trung tâm)",
         "table_scope": SCOPE_ALL,
     },
     ROLE_RECEPTIONIST: {
         "title": "Việc tại quầy tiếp nhận",
-        "subtitle": "Những phiếu cần bạn xử lý ngay: tiếp nhận máy và trả máy cho khách.",
-        "cards": ["RECEIVED", "INSPECTING", "REPAIRING", "WAITING_RETURN", "COMPLETED"],
-        "focus_order": ["RECEIVED", "WAITING_RETURN", "INSPECTING", "REPAIRING"],
+        "subtitle": "Những phiếu cần bạn xử lý ngay: tiếp nhận máy và bàn giao trả máy cho khách.",
+        "cards": ["TOTAL", "IN_PROGRESS", "WAITING_RETURN", "RETURNED"],
+        "focus_order": ["COMPLETED", "REJECTED", "RECEIVED", "INSPECTING", "REPAIRING"],
         "show_attention": False,
-        "table_title": "Phiếu tôi đang phụ trách",
-        "table_scope": SCOPE_DEFAULT,
+        "table_title": "Phiếu tại quầy tiếp nhận",
+        "table_scope": SCOPE_MINE,
     },
     ROLE_TECHNICIAN: {
         "title": "Công việc kỹ thuật",
-        "subtitle": "Máy cần kiểm tra, đang sửa chữa và các phiếu cần cập nhật kết quả.",
-        "cards": ["RECEIVED", "INSPECTING", "REPAIRING", "WAITING_RETURN"],
-        "focus_order": ["RECEIVED", "REPAIRING", "INSPECTING", "WAITING_RETURN"],
+        "subtitle": "Máy được phân công kiểm tra, đang sửa chữa và các phiếu cần cập nhật kết quả.",
+        "cards": ["TOTAL", "IN_PROGRESS", "WAITING_RETURN", "RETURNED"],
+        "focus_order": ["RECEIVED", "INSPECTING", "REPAIRING", "COMPLETED", "REJECTED"],
         "show_attention": False,
-        "table_title": "Phiếu tôi đang xử lý",
-        "table_scope": SCOPE_DEFAULT,
+        "table_title": "Phiếu được giao cho tôi",
+        "table_scope": SCOPE_MINE,
     },
 }
 
@@ -318,7 +331,7 @@ QUICK_ACTIONS: Dict[str, List[Dict[str, Any]]] = {
         {
             "key": "waiting_return",
             "label": "Danh sách chờ trả máy",
-            "description": "Máy đã sửa xong, cần gọi khách tới nhận",
+            "description": "Máy hoàn tất hoặc từ chối, cần bàn giao cho khách",
             "icon": "handshake",
         },
         {
@@ -331,8 +344,8 @@ QUICK_ACTIONS: Dict[str, List[Dict[str, Any]]] = {
     ROLE_TECHNICIAN: [
         {
             "key": "waiting_inspect",
-            "label": "Phiếu chờ kiểm tra",
-            "description": "Máy vừa tiếp nhận, cần bắt đầu kiểm tra",
+            "label": "Phiếu được phân công",
+            "description": "Máy được phân công cho bạn, bắt đầu kiểm tra",
             "icon": "stethoscope",
             "primary": True,
         },
@@ -352,18 +365,22 @@ QUICK_ACTIONS: Dict[str, List[Dict[str, Any]]] = {
 }
 
 # ------------------- Ghi chú nghiệp vụ theo vai trò (việc này của ai) ------
-ROLE_NOTES: Dict[str, List[str]] = {
+ROLE_NOTES: Dict[str, List[Dict[str, Any]]] = {
     ROLE_MANAGER: [
-        "Chỉ Quản lý được xác nhận TỪ CHỐI bảo hành (quyết định thuộc quản lý).",
+        "Chỉ Quản lý được duyệt xác nhận TỪ CHỐI bảo hành (kèm lý do bắt buộc).",
+        "Có thể phân công kỹ thuật viên phụ trách phiếu bảo hành.",
         "Khối \"Việc cần chú ý\" chỉ liệt kê dữ liệu thật của phiếu, không tự đặt ngưỡng cảnh báo.",
     ],
     ROLE_RECEPTIONIST: [
-        "Bước cuối (xác nhận đã trả máy) là việc tại quầy: bạn hoặc quản lý thực hiện.",
-        "Máy đang kiểm tra/sửa chữa thuộc phòng kỹ thuật — bạn theo dõi để trả lời khách.",
+        "Bước cuối (xác nhận trả máy) là việc tại quầy: Tiếp nhận hoặc Quản lý thực hiện.",
+        "Máy đang kiểm tra/sửa chữa thuộc phòng kỹ thuật — Tiếp nhận theo dõi để trả lời khách.",
+        "Không ghi chẩn đoán, nội dung sửa chữa hoặc tự duyệt từ chối.",
     ],
     ROLE_TECHNICIAN: [
-        "Kỹ thuật viên không tự xác nhận trả máy: khi sửa xong hãy chuyển phiếu sang \"Chờ trả máy\" để quầy bàn giao.",
-        "Kết luận chẩn đoán do bạn ghi; gợi ý của hệ thống chỉ là thông tin tham khảo.",
+        "Kỹ thuật viên chỉ thao tác trên các phiếu được phân công cho mình.",
+        "Kiểm tra → Sửa chữa: Bắt buộc ghi chẩn đoán và xác định đủ điều kiện bảo hành.",
+        "Sửa chữa → Hoàn tất: Bắt buộc ghi nội dung sửa và xác nhận kết quả kiểm tra đạt yêu cầu.",
+        "Kỹ thuật viên không tự duyệt từ chối hoặc trả máy: nếu không đủ điều kiện, ghi đề xuất từ chối để Quản lý duyệt.",
     ],
 }
 
@@ -380,35 +397,45 @@ def _resolve_scope(requested: Optional[str]) -> str:
 def _query_tickets(
     db: Session,
     statuses: List[str],
+    current_user: Optional[User] = None,
+    scope: Optional[str] = None,
     mine_user_id: Optional[int] = None,
     limit: Optional[int] = None,
 ) -> List[WarrantyTicket]:
     """
-    Lấy phiếu theo danh sách trạng thái; `mine_user_id` lọc ở tầng SQL
-    (người xử lý gần nhất) để số liệu và danh sách luôn khớp nhau.
+    Lấy phiếu theo danh sách trạng thái; lọc ở tầng SQL theo đúng vai trò và trung tâm bảo hành
+    để số liệu và danh sách luôn khớp nhau 100%.
     """
     query = db.query(WarrantyTicket).filter(WarrantyTicket.status.in_(list(statuses)))
-    if mine_user_id is not None:
-        handler = crud_tickets.last_handler_subquery(db)
-        query = query.outerjoin(handler, handler.c.ticket_id == WarrantyTicket.id).filter(
-            func.coalesce(handler.c.changed_by, WarrantyTicket.created_by) == mine_user_id
-        )
+    query = crud_tickets.apply_ticket_scope_filter(
+        query,
+        current_user=current_user,
+        scope=scope,
+        mine_user_id=mine_user_id,
+    )
     query = query.order_by(WarrantyTicket.id.desc())
     if limit is not None:
         query = query.limit(int(limit))
     return query.all()
 
 
-def _count_tickets(db: Session, statuses: List[str], mine_user_id: Optional[int] = None) -> int:
+def _count_tickets(
+    db: Session,
+    statuses: List[str],
+    current_user: Optional[User] = None,
+    scope: Optional[str] = None,
+    mine_user_id: Optional[int] = None,
+) -> int:
     """Đếm phiếu theo trạng thái (cùng điều kiện lọc với `_query_tickets`)."""
     query = db.query(func.count(WarrantyTicket.id)).filter(
         WarrantyTicket.status.in_(list(statuses))
     )
-    if mine_user_id is not None:
-        handler = crud_tickets.last_handler_subquery(db)
-        query = query.outerjoin(handler, handler.c.ticket_id == WarrantyTicket.id).filter(
-            func.coalesce(handler.c.changed_by, WarrantyTicket.created_by) == mine_user_id
-        )
+    query = crud_tickets.apply_ticket_scope_filter(
+        query,
+        current_user=current_user,
+        scope=scope,
+        mine_user_id=mine_user_id,
+    )
     return int(query.scalar() or 0)
 
 
@@ -454,15 +481,26 @@ def _sort_for_work(rows: List[Dict[str, Any]], order: List[str]) -> List[Dict[st
 def _attention_reasons(ticket: WarrantyTicket) -> List[str]:
     reasons: List[str] = []
     if ticket.status == "RECEIVED":
-        reasons.append("Máy đã tiếp nhận nhưng chưa chuyển vào phòng kiểm tra")
+        if not ticket.assigned_technician_id:
+            reasons.append("Máy đã tiếp nhận nhưng chưa phân công KTV phụ trách")
+        else:
+            reasons.append("Máy đã tiếp nhận, chưa bắt đầu kiểm tra")
     elif ticket.status == "INSPECTING":
-        if not (ticket.diagnosis_note or "").strip():
-            reasons.append("Chưa có kết luận chẩn đoán của kỹ thuật viên")
+        if (ticket.rejection_proposal_note or "").strip():
+            reasons.append(f"KTV đề xuất từ chối: {ticket.rejection_proposal_note}")
+        elif not (ticket.diagnosis_note or "").strip():
+            reasons.append("Chưa có kết luận chẩn đoán của KTV")
+        elif ticket.is_warranty_eligible is None:
+            reasons.append("Chưa xác nhận điều kiện bảo hành")
     elif ticket.status == "REPAIRING":
         if not (ticket.repair_content or "").strip():
-            reasons.append("Chưa cập nhật nội dung đã kiểm tra / đã sửa chữa")
-    elif ticket.status == "WAITING_RETURN":
-        reasons.append("Máy đã sửa xong, đang chờ khách tới nhận")
+            reasons.append("Chưa cập nhật nội dung sửa chữa")
+        elif not ticket.repair_test_passed:
+            reasons.append("Chưa kiểm tra sau sửa đạt yêu cầu")
+    elif ticket.status == "COMPLETED":
+        reasons.append("Máy đã sửa xong đạt yêu cầu, đang chờ khách tới nhận")
+    elif ticket.status == "REJECTED":
+        reasons.append("Đã từ chối bảo hành, đang chờ trả lại máy cho khách")
     return reasons
 
 
@@ -517,46 +555,68 @@ def build_attention(
 
 
 def build_cards(
-    db: Session,
     role: str,
-    counts_all: Dict[str, int],
-    counts_mine: Dict[str, int],
-    scope: str,
+    counts_active: Dict[str, int],
+    scope_label: str,
 ) -> List[Dict[str, Any]]:
     """
-    Thẻ số liệu của bảng điều khiển theo vai trò.
-
-    `scope = DEFAULT`: dùng phạm vi khai báo cho từng nhóm việc (việc chung của
-    trung tâm hay việc của chính tôi). `scope = MINE/ALL`: áp cho mọi thẻ.
+    4 thẻ số liệu chuẩn theo yêu cầu:
+    - Tổng phiếu
+    - Đang xử lý = Tiếp nhận + Kiểm tra + Sửa chữa
+    - Chờ trả máy = Hoàn tất + Từ chối
+    - Đã trả máy
+    Trong cùng phạm vi, Tổng phiếu luôn bằng tổng 3 nhóm còn lại 100%.
     """
-    layout = ROLE_LAYOUT.get(role, ROLE_LAYOUT[ROLE_RECEPTIONIST])
-    status_scopes = _status_scope_map(role)
-    cards: List[Dict[str, Any]] = []
-    for key in layout["cards"]:
-        definition = CARD_DEFS.get(key)
-        if definition is None:
-            continue
-        if key == "TOTAL":
-            count = sum(counts_all.values())
-        elif key == "CUSTOMERS":
-            count = int(db.query(func.count(Customer.id)).scalar() or 0)
-        elif key == "DEVICES":
-            count = int(db.query(func.count(ProductInstance.id)).scalar() or 0)
-        else:
-            resolved = scope if scope != SCOPE_DEFAULT else status_scopes.get(key, SCOPE_ALL)
-            source = counts_mine if resolved == SCOPE_MINE else counts_all
-            count = int(source.get(key, 0))
-        cards.append(
-            {
-                "key": key,
-                "label": definition["label"],
-                "count": count,
-                "description": definition["description"],
-                "tone": definition["tone"],
-                "status": None if key in ("TOTAL", "CUSTOMERS", "DEVICES") else key,
-            }
-        )
-    return cards
+    rec = int(counts_active.get("RECEIVED", 0))
+    insp = int(counts_active.get("INSPECTING", 0))
+    rep = int(counts_active.get("REPAIRING", 0))
+    comp = int(counts_active.get("COMPLETED", 0))
+    rej = int(counts_active.get("REJECTED", 0))
+    ret = int(counts_active.get("RETURNED", 0))
+
+    in_progress = rec + insp + rep
+    waiting_return = comp + rej
+    returned = ret
+    total = in_progress + waiting_return + returned
+
+    return [
+        {
+            "key": "TOTAL",
+            "label": "Tổng phiếu",
+            "count": total,
+            "description": f"Tất cả phiếu ({scope_label})",
+            "tone": "indigo",
+            "status": "ALL",
+            "icon": "files",
+        },
+        {
+            "key": "IN_PROGRESS",
+            "label": "Đang xử lý",
+            "count": in_progress,
+            "description": f"Tiếp nhận: {rec} • Kiểm tra: {insp} • Sửa: {rep}",
+            "tone": "blue",
+            "status": "PROCESSING",
+            "icon": "hammer",
+        },
+        {
+            "key": "WAITING_RETURN",
+            "label": "Chờ trả máy",
+            "count": waiting_return,
+            "description": f"Hoàn tất: {comp} • Từ chối: {rej}",
+            "tone": "amber",
+            "status": "WAITING_RETURN",
+            "icon": "clock",
+        },
+        {
+            "key": "RETURNED",
+            "label": "Đã trả máy",
+            "count": returned,
+            "description": "Đã bàn giao cho khách và đóng phiếu",
+            "tone": "emerald",
+            "status": "RETURNED",
+            "icon": "check-circle-2",
+        },
+    ]
 
 
 def build_quick_actions(role: str, current_user: User) -> List[Dict[str, Any]]:
@@ -590,25 +650,54 @@ def build_workboard(
     Dựng toàn bộ dữ liệu bảng điều khiển cho vai trò của `current_user`.
 
     Chỉ ĐỌC dữ liệu, không thay đổi nghiệp vụ phiếu: mọi số liệu đều tính từ
-    trạng thái + lịch sử thật trong CSDL.
+    trạng thái + lịch sử thật trong CSDL theo đúng phân quyền vai trò và trung tâm.
     """
     role = current_user.role or ""
     layout = ROLE_LAYOUT.get(role, ROLE_LAYOUT[ROLE_RECEPTIONIST])
     resolved_scope = _resolve_scope(scope)
     focus_order = list(layout["focus_order"])
 
-    counts_all = crud_tickets.count_tickets_by_status(db)
-    counts_mine = crud_tickets.count_tickets_by_status(db, mine_user_id=current_user.id)
+    # 1. Xác định phạm vi đang xem
+    if resolved_scope == SCOPE_MINE:
+        active_scope = SCOPE_MINE
+    elif resolved_scope == SCOPE_ALL:
+        active_scope = SCOPE_ALL
+    else:  # DEFAULT
+        active_scope = SCOPE_ALL if role == ROLE_MANAGER else SCOPE_MINE
 
-    # ---------------- 1. Nhóm công việc (kèm phiếu cần xử lý) ----------------
+    if active_scope == SCOPE_MINE:
+        if role == ROLE_RECEPTIONIST:
+            scope_label = "Việc tại quầy"
+        elif role == ROLE_TECHNICIAN:
+            scope_label = "Phiếu được giao cho tôi"
+        else:
+            scope_label = "Toàn trung tâm"
+    else:
+        scope_label = "Toàn trung tâm"
+
+    counts_active = crud_tickets.count_tickets_by_status(
+        db,
+        current_user=current_user,
+        scope=active_scope,
+    )
+
+    # 2. Nhóm công việc (theo đúng vai trò và phạm vi)
     groups: List[Dict[str, Any]] = []
     for definition in WORK_GROUPS.get(role, []):
         group_scope = definition["scope"] if resolved_scope == SCOPE_DEFAULT else resolved_scope
-        mine_user_id = current_user.id if group_scope == SCOPE_MINE else None
         statuses = list(definition["statuses"])
-        count = _count_tickets(db, statuses, mine_user_id=mine_user_id)
-        tickets = _query_tickets(
-            db, statuses, mine_user_id=mine_user_id, limit=GROUP_ITEM_LIMIT
+        group_tickets = _query_tickets(
+            db,
+            statuses,
+            current_user=current_user,
+            scope=group_scope,
+            limit=GROUP_ITEM_LIMIT,
+        )
+        count = _count_tickets(
+            db,
+            statuses,
+            current_user=current_user,
+            scope=group_scope,
         )
         groups.append(
             {
@@ -619,17 +708,20 @@ def build_workboard(
                 "status_filter": ",".join(statuses),
                 "statuses": statuses,
                 "scope": group_scope,
-                "scope_label": "Việc của tôi" if group_scope == SCOPE_MINE else "Toàn trung tâm",
+                "scope_label": (
+                    "Việc tại quầy" if role == ROLE_RECEPTIONIST and group_scope == SCOPE_MINE
+                    else ("Phiếu được giao" if role == ROLE_TECHNICIAN and group_scope == SCOPE_MINE else "Toàn trung tâm")
+                ),
                 "tone": STATUS_TONES.get(statuses[0], "slate"),
                 "action_target": definition["action_target"],
                 "action_label": definition["action_label"],
                 "items": ticket_view.build_ticket_summaries(
-                    db, tickets, current_user=current_user
+                    db, group_tickets, current_user=current_user
                 ),
             }
         )
 
-    # ------------------------- 2. Việc cần làm ngay -------------------------
+    # 3. Việc cần làm ngay
     status_scopes = _status_scope_map(role)
     focus: List[Dict[str, Any]] = []
     for status_code in focus_order:
@@ -638,64 +730,89 @@ def build_workboard(
             if resolved_scope != SCOPE_DEFAULT
             else status_scopes.get(status_code, SCOPE_ALL)
         )
-        mine_user_id = current_user.id if resolved == SCOPE_MINE else None
-        tickets = _query_tickets(db, [status_code], mine_user_id=mine_user_id, limit=FOCUS_LIMIT)
+        tickets = _query_tickets(
+            db,
+            [status_code],
+            current_user=current_user,
+            scope=resolved,
+            limit=FOCUS_LIMIT,
+        )
         focus.extend(
             ticket_view.build_ticket_summaries(db, tickets, current_user=current_user)
         )
     focus = _sort_for_work(focus, focus_order)[:FOCUS_LIMIT]
 
-    # ---------------- 3. Phiếu đang xử lý + phiếu của tôi -------------------
-    active_tickets = _sort_for_work(
-        ticket_view.build_ticket_summaries(
-            db,
-            _query_tickets(db, list(OPEN_TICKET_STATUSES), limit=TABLE_LIMIT * 2),
-            current_user=current_user,
-        ),
-        focus_order,
-    )[:TABLE_LIMIT]
+    # 4. Phiếu đang xử lý + phiếu của tôi (lấy trọn bộ để phân trang / lọc chính xác)
+    my_raw_tickets = crud_tickets.get_warranty_tickets(
+        db,
+        current_user=current_user,
+        scope=SCOPE_MINE,
+        limit=100,
+    )
     my_tickets = _sort_for_work(
-        ticket_view.build_ticket_summaries(
-            db,
-            _query_tickets(
-                db,
-                list(OPEN_TICKET_STATUSES),
-                mine_user_id=current_user.id,
-                limit=TABLE_LIMIT * 2,
-            ),
-            current_user=current_user,
-        ),
+        ticket_view.build_ticket_summaries(db, my_raw_tickets, current_user=current_user),
         focus_order,
-    )[:TABLE_LIMIT]
+    )
 
-    # --------------------- 4. Việc cần chú ý (Quản lý) ----------------------
+    all_raw_tickets = crud_tickets.get_warranty_tickets(
+        db,
+        current_user=current_user,
+        scope=SCOPE_ALL,
+        limit=100,
+    )
+    active_tickets = _sort_for_work(
+        ticket_view.build_ticket_summaries(db, all_raw_tickets, current_user=current_user),
+        focus_order,
+    )
+
+    # 5. Việc cần chú ý (Quản lý)
     attention: List[Dict[str, Any]] = []
     if layout["show_attention"]:
         attention = build_attention(
             db,
-            _query_tickets(db, list(OPEN_TICKET_STATUSES)),
+            _query_tickets(
+                db,
+                list(OPEN_TICKET_STATUSES),
+                current_user=current_user,
+                scope=SCOPE_ALL,
+            ),
             current_user,
             focus_order,
         )
 
-    totals = dict(counts_all)
-    totals["total_tickets"] = sum(counts_all.values())
-    totals["my_total_tickets"] = sum(counts_mine.values())
-    totals["customers"] = int(db.query(func.count(Customer.id)).scalar() or 0)
-    totals["devices"] = int(db.query(func.count(ProductInstance.id)).scalar() or 0)
+    cards = build_cards(role, counts_active, scope_label)
+
+    rec = int(counts_active.get("RECEIVED", 0))
+    insp = int(counts_active.get("INSPECTING", 0))
+    rep = int(counts_active.get("REPAIRING", 0))
+    comp = int(counts_active.get("COMPLETED", 0))
+    rej = int(counts_active.get("REJECTED", 0))
+    ret = int(counts_active.get("RETURNED", 0))
+
+    in_progress = rec + insp + rep
+    waiting_return = comp + rej
+    returned = ret
+    total_tickets = in_progress + waiting_return + returned
+
+    totals = {
+        **counts_active,
+        "total_tickets": total_tickets,
+        "in_progress": in_progress,
+        "waiting_return": waiting_return,
+        "returned": returned,
+        "customers": int(db.query(func.count(Customer.id)).scalar() or 0),
+        "devices": int(db.query(func.count(ProductInstance.id)).scalar() or 0),
+    }
 
     return {
         "role": role,
         "role_label": ROLE_LABELS_VN.get(role, role),
         "title": layout["title"],
         "subtitle": layout["subtitle"],
-        "scope": resolved_scope,
-        "scope_label": {
-            SCOPE_MINE: "Việc của tôi",
-            SCOPE_ALL: "Toàn bộ phiếu",
-        }.get(resolved_scope, "Theo vai trò"),
+        "scope": active_scope,
+        "scope_label": scope_label,
         "generated_at": datetime.utcnow(),
-        "cards": build_cards(db, role, counts_all, counts_mine, resolved_scope),
+        "cards": cards,
         "groups": groups,
         "focus": focus,
         "attention": attention,

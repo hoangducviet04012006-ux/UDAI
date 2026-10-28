@@ -152,23 +152,38 @@ class WarrantyTicketCreate(BaseModel):
     service_center_id: int = Field(..., description="Trung tâm bảo hành tiếp nhận")
     created_by: int = Field(..., description="ID nhân viên tiếp nhận (RECEPTIONIST/MANAGER)")
     issue_description: str = Field(..., description="Mô tả lỗi của khách hàng")
+    device_condition: Optional[str] = Field(None, description="Tình trạng ngoại quan khi tiếp nhận máy")
+    accessories_accompanying: Optional[str] = Field(None, description="Phụ kiện nhận kèm theo máy")
     error_category_id: Optional[int] = Field(None, description="Danh mục lỗi (tùy chọn sau khi AI gợi ý/nhân viên review)")
+    technician_id: Optional[int] = Field(None, description="ID kỹ thuật viên phụ trách (tùy chọn gán ngay khi lập phiếu)")
+
+class WarrantyTicketAssign(BaseModel):
+    technician_id: int = Field(..., gt=0, description="ID kỹ thuật viên được phân công phụ trách")
+    note: Optional[str] = Field(None, description="Ghi chú phân công")
+
+class WarrantyTicketProposal(BaseModel):
+    proposal_note: str = Field(..., min_length=3, description="Đề xuất từ chối và bằng chứng kiểm tra của kỹ thuật viên")
+
+class RejectionReviewRequest(BaseModel):
+    decision: str = Field(..., pattern="^(APPROVED|DECLINED)$", description="APPROVED hoặc DECLINED")
+    note: str = Field(..., min_length=3, description="Lý do chính thức hoặc ghi chú quyết định của Quản lý")
 
 class WarrantyTicketStatusUpdate(BaseModel):
-    new_status: str = Field(..., description="Trạng thái chuyển tiếp hợp lệ theo State Machine: INSPECTING, REPAIRING, WAITING_RETURN, COMPLETED, REJECTED (bắt buộc đi qua WAITING_RETURN trước khi COMPLETED)")
+    new_status: str = Field(..., description="Trạng thái chuyển tiếp hợp lệ: INSPECTING, REPAIRING, COMPLETED, REJECTED, RETURNED")
     changed_by: int = Field(..., description="ID người thực hiện cập nhật")
     note: Optional[str] = Field(None, description="Ghi chú kèm theo việc cập nhật trạng thái")
     rejection_reason: Optional[str] = Field(None, description="Lý do từ chối (bắt buộc nếu chuyển sang REJECTED)")
-    # [Đợt hoàn thiện nghiệp vụ] Thông tin xử lý ghi kèm theo bước chuyển.
-    # Mỗi bước yêu cầu tối thiểu 1 nội dung (xem TRANSITION_RULES ở warranty_rules.py):
-    #   - INSPECTING -> REPAIRING      : diagnosis_note (hoặc note)
-    #   - REPAIRING  -> WAITING_RETURN : repair_content / repair_note (hoặc note)
-    #   - WAITING_RETURN -> COMPLETED  : handover_note (hoặc note)
+    technician_id: Optional[int] = Field(None, description="Chỉ định KTV khi chuyển sang INSPECTING (nếu chưa có)")
     diagnosis_note: Optional[str] = Field(None, description="Kết luận chẩn đoán của kỹ thuật viên")
-    error_category_id: Optional[int] = Field(None, description="Loại lỗi do kỹ thuật viên xác nhận (không phải gợi ý của AI)")
+    error_category_id: Optional[int] = Field(None, description="Loại lỗi do kỹ thuật viên xác nhận")
+    is_warranty_eligible: Optional[bool] = Field(None, description="Xác định đủ điều kiện bảo hành (True/False)")
+    warranty_check_note: Optional[str] = Field(None, description="Ghi chú xác định điều kiện bảo hành")
     repair_content: Optional[str] = Field(None, description="Nội dung đã kiểm tra / đã sửa chữa")
     repair_parts: Optional[str] = Field(None, description="Linh kiện / thành phần đã thay thế")
     repair_note: Optional[str] = Field(None, description="Ghi chú kỹ thuật khi sửa chữa")
+    repair_test_passed: Optional[bool] = Field(None, description="Kết quả kiểm tra sau sửa đạt yêu cầu (True/False)")
+    repair_test_note: Optional[str] = Field(None, description="Ghi chú kiểm tra sau sửa")
+    rejection_proposal_note: Optional[str] = Field(None, description="Đề xuất và bằng chứng kiểm tra của KTV")
     handover_note: Optional[str] = Field(None, description="Ghi chú khi bàn giao máy cho khách")
 
 class TicketActionOption(BaseModel):
@@ -196,26 +211,41 @@ class WarrantyTicketResponse(BaseModel):
     service_center_id: int
     created_by: int
     issue_description: str
+    device_condition: Optional[str] = None
+    accessories_accompanying: Optional[str] = None
     error_category_id: Optional[int]
     status: str
+    # Phân công kỹ thuật viên phụ trách
+    assigned_technician_id: Optional[int] = None
+    assigned_technician_name: Optional[str] = None
+    assigned_at: Optional[datetime] = None
     # Nhãn tiếng Việt + câu mô tả trạng thái (giao diện KHÔNG hiển thị mã enum cho nhân viên)
     status_label: Optional[str] = None
     status_hint: Optional[str] = None
+    # Điều kiện bảo hành & kiểm tra sau sửa
+    is_warranty_eligible: Optional[bool] = None
+    warranty_check_note: Optional[str] = None
+    repair_test_passed: Optional[bool] = None
+    repair_test_note: Optional[str] = None
+    # Nhánh từ chối
     rejection_reason: Optional[str]
     rejection_proposed_by: Optional[int]
     rejection_proposed_at: Optional[datetime]
+    rejection_proposal_note: Optional[str] = None
     rejection_reviewed_by: Optional[int]
     rejection_reviewed_at: Optional[datetime]
     rejection_review_status: Optional[str]
+    # Bàn giao & Đóng phiếu
+    completed_at: Optional[datetime] = None
     handed_over_at: Optional[datetime]
-    # Thông tin sản phẩm đính kèm phiếu (đọc qua relationship, giúp màn hình chi tiết phiếu
-    # hiển thị đúng nội dung yêu cầu KT2: Mã phiếu + Serial + sản phẩm + khách hàng)
+    handed_over_by: Optional[int] = None
+    handover_note: Optional[str] = None
+    resolution: Optional[str] = None  # 'COMPLETED' (Sửa hoàn tất) hoặc 'REJECTED' (Từ chối)
+    # Thông tin sản phẩm đính kèm phiếu
     serial_number: Optional[str] = None
     product_name: Optional[str] = None
     customer_name: Optional[str] = None
     warranty_end_date: Optional[date] = None
-    # [Đợt hoàn thiện nghiệp vụ] Thông tin phục vụ DANH SÁCH phiếu (bảng phiếu, bảng điều khiển):
-    # số điện thoại khách hàng để tra cứu, nhãn loại lỗi, người phụ trách hiện tại.
     customer_phone: Optional[str] = None
     error_category_name: Optional[str] = None
     handler_id: Optional[int] = None
@@ -223,9 +253,6 @@ class WarrantyTicketResponse(BaseModel):
     created_at: datetime
     updated_at: datetime
     status_history: List[TicketStatusHistoryResponse] = []
-    # [Đợt màn hình công việc theo vai trò] Mỗi DÒNG danh sách đã biết trước
-    # "người đang đăng nhập được bấm gì" -> giao diện không phải tự suy diễn,
-    # và cũng không hiển thị thao tác mà backend sẽ chặn (403).
     available_actions: List[TicketActionOption] = Field(
         default_factory=list, description="Các bước chuyển trạng thái mà vai trò hiện tại được phép"
     )
@@ -344,6 +371,37 @@ class AIReviewResponse(BaseModel):
     message: str
 
 
+class AISuggestCategoryRequest(BaseModel):
+    """Yêu cầu gợi ý loại lỗi trực tiếp từ mô tả (phục vụ lúc tiếp nhận máy mới hoặc kiểm tra)."""
+    product_name: Optional[str] = Field(None, description="Tên dòng máy")
+    issue_description: str = Field(..., min_length=3, description="Mô tả tình trạng lỗi của thiết bị")
+
+
+class AIHistorySummaryResponse(BaseModel):
+    """Kết quả tóm tắt lịch sử bảo hành của thiết bị/phiếu bằng AI."""
+    device_id: Optional[int] = None
+    serial_number: Optional[str] = None
+    product_name: Optional[str] = None
+    total_tickets: int = 0
+    warranty_status: str
+    summary: str
+    history_highlights: List[str] = Field(default_factory=list)
+    recommendation: Optional[str] = None
+    provider_info: Dict[str, Any] = Field(default_factory=dict)
+
+
+class AIProgressNotificationResponse(BaseModel):
+    """Bản thảo tin nhắn cập nhật tiến độ do AI soạn để nhân viên xem, sửa và sao chép."""
+    ticket_id: int
+    ticket_code: str
+    customer_name: Optional[str] = None
+    device_name: Optional[str] = None
+    current_status: str
+    status_label: str
+    draft_message: str
+    provider_info: Dict[str, Any] = Field(default_factory=dict)
+
+
 # =====================================================================
 # Đợt 7 - Xác thực (Auth) & Phân quyền theo vai trò (RBAC)
 # ---------------------------------------------------------------------
@@ -410,7 +468,7 @@ class StaffUserCreate(BaseModel):
     """Quản lý tạo tài khoản nhân viên mới."""
 
     username: str = Field(..., min_length=3, max_length=50, pattern=r"^[A-Za-z0-9._-]+$")
-    password: str = Field(..., min_length=8, max_length=128, description="Mật khẩu tối thiểu 8 ký tự")
+    password: str = Field(..., min_length=6, max_length=128, description="Mật khẩu tối thiểu 6 ký tự")
     full_name: str = Field(..., min_length=1, max_length=100)
     role: str = Field(..., pattern=r"^(MANAGER|RECEPTIONIST|TECHNICIAN)$")
     email: Optional[str] = Field(None, max_length=100)
@@ -428,7 +486,7 @@ class StaffUserUpdate(BaseModel):
     phone: Optional[str] = Field(None, max_length=20)
     service_center_id: Optional[int] = Field(None, gt=0)
     active: Optional[bool] = None
-    new_password: Optional[str] = Field(None, min_length=8, max_length=128)
+    new_password: Optional[str] = Field(None, min_length=6, max_length=128)
 
 
 class StaffUserResponse(BaseModel):
@@ -474,6 +532,8 @@ class TicketDiagnosisUpdate(BaseModel):
     error_category_id: Optional[int] = Field(
         None, gt=0, description="Loại lỗi do kỹ thuật viên xác nhận (không phải gợi ý của AI)"
     )
+    is_warranty_eligible: Optional[bool] = Field(None, description="Xác nhận đủ điều kiện bảo hành")
+    warranty_check_note: Optional[str] = Field(None, description="Ghi chú xác định điều kiện bảo hành")
     note: Optional[str] = Field(None, description="Ghi chú thêm (tùy chọn)")
 
 
@@ -484,6 +544,8 @@ class TicketRepairUpdate(BaseModel):
     repair_content: Optional[str] = Field(None, description="Nội dung đã kiểm tra và đã sửa")
     repair_parts: Optional[str] = Field(None, description="Linh kiện / thành phần đã thay thế")
     repair_note: Optional[str] = Field(None, description="Ghi chú kỹ thuật")
+    repair_test_passed: Optional[bool] = Field(None, description="Kết quả kiểm tra sau sửa đạt yêu cầu")
+    repair_test_note: Optional[str] = Field(None, description="Ghi chú kiểm tra sau sửa")
     note: Optional[str] = Field(None, description="Ghi chú thêm (tùy chọn)")
 
 
@@ -519,6 +581,11 @@ class TicketIntakeInfo(BaseModel):
     received_by: Optional[int] = None
     received_by_name: Optional[str] = None
     issue_description: str = Field(..., description="Mô tả tình trạng/lỗi do KHÁCH HÀNG cung cấp")
+    device_condition: Optional[str] = None
+    accessories_accompanying: Optional[str] = None
+    assigned_technician_id: Optional[int] = None
+    assigned_technician_name: Optional[str] = None
+    assigned_at: Optional[datetime] = None
 
 
 class TicketDiagnosisInfo(BaseModel):
@@ -530,6 +597,12 @@ class TicketDiagnosisInfo(BaseModel):
     confirmed_by: Optional[int] = None
     confirmed_by_name: Optional[str] = None
     confirmed_at: Optional[datetime] = None
+    is_warranty_eligible: Optional[bool] = None
+    warranty_check_note: Optional[str] = None
+    rejection_proposal_note: Optional[str] = None
+    rejection_proposed_by: Optional[int] = None
+    rejection_proposed_by_name: Optional[str] = None
+    rejection_proposed_at: Optional[datetime] = None
 
 
 class TicketAiSuggestionInfo(BaseModel):
@@ -566,19 +639,30 @@ class TicketRepairInfo(BaseModel):
     technician_id: Optional[int] = None
     technician_name: Optional[str] = None
     recorded_at: Optional[datetime] = None
+    repair_test_passed: Optional[bool] = None
+    repair_test_note: Optional[str] = None
     logs: List[TicketRepairLogEntry] = Field(default_factory=list)
 
 
 class TicketHandoverInfo(BaseModel):
     """F. TRẢ MÁY"""
 
-    is_waiting_return: bool = False
+    is_waiting_handover: bool = False
+    is_waiting_return: bool = False  # Giữ để tương thích
+    is_returned: bool = False
     status_message: str = ""
+    completed_at: Optional[datetime] = None
     repair_completed_at: Optional[datetime] = None
     repair_completed_by_name: Optional[str] = None
     returned_at: Optional[datetime] = None
     returned_by_name: Optional[str] = None
     note: Optional[str] = None
+    resolution: Optional[str] = None
+    resolution_label: Optional[str] = None
+    processing_time_hours: Optional[float] = None  # Thời gian xử lý kỹ thuật đến khi xong/từ chối
+    waiting_time_hours: Optional[float] = None     # Thời gian chờ khách nhận máy
+    processing_time_display: Optional[str] = None
+    waiting_time_display: Optional[str] = None
 
 
 class TicketHistoryEntry(BaseModel):

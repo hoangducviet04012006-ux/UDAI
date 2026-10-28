@@ -237,14 +237,21 @@ nút hành động chỉ vẽ theo `available_actions`. → **8/8 PASS**.
 .\dev.ps1 check         # cổng kiểm tra tổng hợp trước khi nộp
 ```
 
-**Kịch bản demo đề xuất (3 phút):**
-1. Đăng nhập `technician01` → tab **Phiếu bảo hành** → bấm **Phiếu của tôi** → mở `TK-20260510-0001`
-   (đang *Chờ trả máy*): thấy "Thiết bị đã sửa xong và đang chờ khách nhận máy", nội dung đã sửa, linh kiện,
-   nhật ký sửa chữa, lịch sử 4 bước — và **không** có nút trả máy (kèm câu giải thích việc này của ai).
-2. Đăng xuất, đăng nhập `receptionist01` → mở cùng phiếu → bấm **Xác nhận đã trả máy** → hộp thoại hiện
-   thiết bị + phiếu + khách hàng và ô "Thông tin bàn giao" → xác nhận → phiếu *Đã hoàn tất*, lịch sử có bước 5.
-3. Mở lại phiếu vừa hoàn tất → thử thấy không còn nút nào; bảng điều khiển chuyển sang **Việc của tôi** để thấy
-   việc tiếp theo của từng vai trò.
+**Kịch bản demo đề xuất (5 phút, 3 vai trò, 2 luồng hoàn chỉnh):**
+
+* **Ca 1 – Sửa chữa bảo hành (Thiết bị lỗi linh kiện nhà sản xuất, đủ điều kiện bảo hành):**
+  1. `receptionist01` (Tiếp nhận): Tiếp nhận thiết bị Asus Zenbook (`SN-ASUS-ROG-2026-001`, còn hạn bảo hành 18 tháng, tem nguyên vẹn, lỗi sập nguồn tự nhiên trong điều kiện sử dụng bình thường). Tạo phiếu bảo hành mới ở trạng thái `RECEIVED` (Tiếp nhận).
+  2. `manager01` (Quản lý): Mở phiếu vừa lập, bấm nút **Phân công KTV**, chọn `technician01` (Lê Kỹ Thuật) phụ trách phiếu.
+  3. `technician01` (Kỹ thuật viên): Thấy phiếu trong danh sách "Phiếu được giao". Bấm **Bắt đầu kiểm tra** (`INSPECTING`). Sau khi tháo máy kiểm tra bo mạch, xác định chập IC nguồn chính RT8205 do lỗi linh kiện từ nhà sản xuất, tem niêm phong nguyên vẹn, không ngấm chất lỏng. KTV bấm **Bắt đầu sửa chữa** (`REPAIRING`), xác nhận đủ điều kiện bảo hành.
+  4. `technician01`: Thay IC nguồn RT8205 và tụ lọc chính hãng, chạy thử test tải 60 phút nhiệt độ ổn định. KTV bấm **Hoàn tất sửa chữa** (`COMPLETED`), xác nhận kiểm tra sau sửa đạt yêu cầu. Phiếu chuyển sang chờ trả máy. KTV không có quyền trả máy.
+  5. `receptionist01`: Mở phiếu đang ở trạng thái Hoàn tất, bấm **Xác nhận trả máy** (`RETURNED`), ghi nhận thông tin bàn giao máy cho khách tại quầy. Phiếu được đóng với kết quả `resolution = 'COMPLETED'`.
+
+* **Ca 2 – Từ chối bảo hành (Thiết bị hết hạn theo quy định BR2 của chính sách mẫu):**
+  1. `receptionist01`: Khách mang máy Samsung Galaxy (`SN-SAMS-EXPIRED-02`, đã quá hạn bảo hành 70 ngày) đến kiểm tra. Tiếp nhận lập phiếu ở trạng thái `RECEIVED` để phòng kỹ thuật kiểm tra hiện trạng thiết bị. Hệ thống tự động ghi nhận máy quá hạn bảo hành.
+  2. `manager01`: Quản lý phân công `technician01` kiểm tra máy.
+  3. `technician01`: Bấm **Bắt đầu kiểm tra** (`INSPECTING`). Hệ thống chặn tuyệt đối không cho chuyển sang sửa chữa bảo hành miễn phí (`REPAIRING`). KTV lập biên bản kiểm tra và bấm **Đề xuất từ chối bảo hành**, ghi nhận thiết bị đã hết thời hạn bảo hành tiêu chuẩn theo quy định BR2.
+  4. `manager01`: Mở phiếu xem đề xuất của KTV, bấm **Từ chối bảo hành** (`REJECTED`), phê duyệt lý do từ chối căn cứ quy định thời hạn bảo hành của nhà sản xuất.
+  5. `receptionist01`: Mở phiếu ở trạng thái Từ chối, bấm **Xác nhận trả máy** (`RETURNED`), bàn giao lại máy nguyên trạng cho khách kèm biên bản từ chối bảo hành và tư vấn dịch vụ sửa chữa tính phí. Phiếu đóng với kết quả `resolution = 'REJECTED'`.
 
 ---
 

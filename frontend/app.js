@@ -24,6 +24,12 @@ const state = {
   // Bảng điều khiển theo vai trò: dữ liệu backend trả về (workboard) + cách xem đang chọn
   workboard: null,
   dashView: null,
+  dashActiveRows: [],
+  dashAttention: [],
+  dashIsAttention: false,
+  dashUseMine: false,
+  dashFilterStatus: "ALL",
+  dashSearchQuery: "",
   selectedTicket: null,
   selectedDeviceId: null,
   currentAiResult: null,
@@ -33,6 +39,7 @@ const state = {
   actionFields: [],
   // Phiên làm việc hiện tại: token + thông tin nhân viên (vai trò & danh sách quyền).
   session: { token: "", user: null },
+  sessionEpoch: 0,
 };
 
 /* --------------------------- Gọi API có xử lý lỗi --------------------------- */
@@ -187,17 +194,23 @@ function showToast(message, type = "info", duration = 4500) {
   if (!container) return;
   const icons = { success: "check-circle", error: "alert-octagon", warning: "alert-triangle", info: "info" };
   const colors = {
-    success: "bg-emerald-950/90 border-emerald-500/50 text-emerald-100",
-    error: "bg-rose-950/90 border-rose-500/50 text-rose-100",
-    warning: "bg-amber-950/90 border-amber-500/50 text-amber-100",
-    info: "bg-slate-900/95 border-slate-700 text-slate-200",
+    success: "bg-emerald-50 border-emerald-300 text-emerald-900 shadow-md",
+    error: "bg-rose-50 border-rose-300 text-rose-900 shadow-md",
+    warning: "bg-amber-50 border-amber-300 text-amber-900 shadow-md",
+    info: "bg-indigo-50 border-indigo-200 text-indigo-950 shadow-md",
+  };
+  const iconColors = {
+    success: "text-emerald-600",
+    error: "text-rose-600",
+    warning: "text-amber-600",
+    info: "text-indigo-600",
   };
   const toast = document.createElement("div");
-  toast.className = `toast flex items-start gap-3 p-4 rounded-xl border shadow-2xl max-w-md ${colors[type] || colors.info}`;
+  toast.className = `toast flex items-start gap-3 p-4 rounded-xl border ${colors[type] || colors.info}`;
   toast.innerHTML = `
-    <i data-lucide="${icons[type] || "info"}" class="w-5 h-5 mt-0.5 shrink-0"></i>
-    <div class="flex-1 text-sm font-medium leading-relaxed">${message}</div>
-    <button class="text-slate-400 hover:text-white ml-2 text-xs" onclick="this.parentElement.remove()">&times;</button>`;
+    <i data-lucide="${icons[type] || "info"}" class="w-5 h-5 mt-0.5 shrink-0 ${iconColors[type] || "text-indigo-600"}"></i>
+    <div class="flex-1 text-sm font-semibold leading-relaxed">${message}</div>
+    <button class="text-slate-400 hover:text-slate-700 ml-2 text-base font-bold leading-none" onclick="this.parentElement.remove()">&times;</button>`;
   container.appendChild(toast);
   refreshIcons();
   setTimeout(() => {
@@ -343,12 +356,16 @@ function displayText(value) {
   return DISPLAY_TEXT_MAP[raw] || DISPLAY_TEXT_MAP[raw.trim()] || raw;
 }
 
-/** Bỏ các thẻ kỹ thuật mà backend gắn vào thông báo: [BR2 FAIL], [AI-01]... */
+/** Bỏ các thẻ kỹ thuật mà backend gắn vào thông báo: [BR2 FAIL], [AI-01], BR1-BR4, enum... */
 function stripTechTags(text) {
   if (!text) return "";
   let out = String(text);
   out = out.replace(/\[(BR[1-5]|STATE MACHINE|AI-01|GUARDRAIL|INVALID AI OUTPUT|VALIDATION|REVIEW|AUD-\d+|CHẶN STATE MACHINE)[^\]]*\]/gi, " ");
   out = out.replace(/\(FK RESTRICT\)/gi, " ");
+  out = out.replace(/\(Đạt toàn bộ BR1-BR4\)/gi, "(đạt toàn bộ điều kiện bảo hành)");
+  out = out.replace(/\(Da co san trong seed de test BR3\)/gi, "");
+  out = out.replace(/\bBR[1-5]\b/gi, "");
+  out = out.replace(/\b(WORKFLOW_STATE_CLOSED|INVALID_TRANSITION|RBAC_FORBIDDEN)\b/gi, "");
   out = out.replace(/\s{2,}/g, " ").trim();
   out = out.replace(/\s+([.,;:])/g, "$1");
   return out.replace(/^[-–•:\s]+/, "");
@@ -356,12 +373,12 @@ function stripTechTags(text) {
 
 /* Mã trạng thái xuất hiện BÊN TRONG câu thông báo -> tiếng Việt */
 const INLINE_CODE_MAP = {
-  "RECEIVED": "Mới tiếp nhận",
-  "INSPECTING": "Đang kiểm tra",
-  "REPAIRING": "Đang sửa chữa",
-  "WAITING_RETURN": "Chờ trả máy",
-  "COMPLETED": "Đã hoàn tất",
-  "REJECTED": "Từ chối bảo hành",
+  "RECEIVED": "Tiếp nhận",
+  "INSPECTING": "Kiểm tra",
+  "REPAIRING": "Sửa chữa",
+  "COMPLETED": "Hoàn tất",
+  "REJECTED": "Từ chối",
+  "RETURNED": "Đã trả máy",
   "ACTIVE": "Đang hoạt động",
   "EXPIRED": "Ngừng theo dõi",
   "APPROVED": "Đã xác nhận",
@@ -562,18 +579,19 @@ function confidencePercent(value) {
 
 
 /* --------------------------- Trạng thái phiếu (song ngữ) --------------------------- */
-/* 6 trạng thái vòng đời phiếu - khớp ALLOWED_TRANSITIONS ở backend
-   (app/services/warranty_rules.py). Bắt buộc đi qua WAITING_RETURN trước khi hoàn tất. */
+/* 6 trạng thái vòng đời phiếu:
+   - Luồng sửa chữa: TIẾP NHẬN -> KIỂM TRA -> SỬA CHỮA -> HOÀN TẤT -> ĐÃ TRẢ MÁY
+   - Luồng từ chối: KIỂM TRA -> TỪ CHỐI -> ĐÃ TRẢ MÁY */
 const STATUS_LABELS = {
-  RECEIVED: "Mới tiếp nhận",
-  INSPECTING: "Đang kiểm tra",
-  REPAIRING: "Đang sửa chữa",
-  WAITING_RETURN: "Chờ trả máy",
-  COMPLETED: "Đã hoàn tất",
-  REJECTED: "Từ chối bảo hành",
+  RECEIVED: "Tiếp nhận",
+  INSPECTING: "Kiểm tra",
+  REPAIRING: "Sửa chữa",
+  COMPLETED: "Hoàn tất",
+  REJECTED: "Từ chối",
+  RETURNED: "Đã trả máy",
 };
-const STATUS_COLORS = ["#3B82F6", "#F59E0B", "#A855F7", "#06B6D4", "#10B981", "#EF4444"];
-const STATUS_ORDER = ["RECEIVED", "INSPECTING", "REPAIRING", "WAITING_RETURN", "COMPLETED", "REJECTED"];
+const STATUS_COLORS = ["#3B82F6", "#F59E0B", "#A855F7", "#10B981", "#EF4444", "#64748B"];
+const STATUS_ORDER = ["RECEIVED", "INSPECTING", "REPAIRING", "COMPLETED", "REJECTED", "RETURNED"];
 
 function statusLabel(code) {
   return STATUS_LABELS[code] || "Không xác định";
@@ -594,6 +612,67 @@ function userName(userId) {
   if (userId === null || userId === undefined) return "–";
   const u = state.users.find((x) => x.id === userId);
   return u ? `${displayText(u.full_name)} – ${roleLabel(u.role)}` : "Nhân viên (chưa rõ tên)";
+}
+
+function userShortName(userId) {
+  if (userId === null || userId === undefined) return "–";
+  const u = state.users.find((x) => x.id === userId);
+  if (u) return displayText(u.full_name);
+  const full = userName(userId);
+  return full.split(" – ")[0] || "–";
+}
+
+/**
+ * KTV phụ trách: phân biệt người tiếp nhận (created_by) với KTV được phân công.
+ * Chưa phân công KTV thì hiển thị "Chưa phân công".
+ */
+function ticketTechnicianName(t) {
+  if (!t) return "Chưa phân công";
+  // 1. Cột phân công KTV từ backend API
+  if (t.assigned_technician_name) {
+    const n = displayText(t.assigned_technician_name);
+    if (n && n !== "–" && n !== "Chưa rõ") return n;
+  }
+  if (t.assigned_technician_id) {
+    const n = userShortName(t.assigned_technician_id);
+    if (n && n !== "–" && n !== "Chưa rõ") return n;
+  }
+  // 2. KTV thực hiện sửa chữa
+  if (t.repair_by) {
+    const n = userShortName(t.repair_by);
+    if (n && n !== "–" && n !== "Chưa rõ") return n;
+  }
+  // 3. KTV thực hiện chẩn đoán
+  if (t.diagnosis_by) {
+    const n = userShortName(t.diagnosis_by);
+    if (n && n !== "–" && n !== "Chưa rõ") return n;
+  }
+  // 4. Lịch sử chuyển trạng thái: tìm bước INSPECTING/REPAIRING do KTV thực hiện (không phải receptionist)
+  const history = Array.isArray(t.status_history) ? t.status_history : (Array.isArray(t.history) ? t.history : []);
+  for (let i = history.length - 1; i >= 0; i--) {
+    const s = history[i];
+    if (["INSPECTING", "REPAIRING"].includes(s.to_status) && s.changed_by && s.changed_by !== t.created_by) {
+      const n = s.changed_by_name ? displayText(s.changed_by_name) : userShortName(s.changed_by);
+      if (n && n !== "–" && n !== "Chưa rõ") return n;
+    }
+  }
+  // Nếu phiếu mới tiếp nhận (RECEIVED), chắc chắn chưa phân công KTV
+  if (t.status === "RECEIVED") return "Chưa phân công";
+
+  // Nếu có handler_name và không phải người tiếp nhận
+  if (t.handler_name) {
+    const h = displayText(t.handler_name);
+    const creator = userShortName(t.created_by);
+    if (h && h !== creator && h !== "–" && !h.toLowerCase().includes("tiếp nhận")) return h;
+  }
+  return "Chưa phân công";
+}
+
+function formatTechnicianCell(name) {
+  if (!name || name === "Chưa phân công") {
+    return `<span class="text-slate-400 italic">Chưa phân công</span>`;
+  }
+  return `<span class="font-medium text-slate-800">${escapeHtml(name)}</span>`;
 }
 
 function categoryName(categoryId) {
@@ -708,7 +787,7 @@ function showActionModal(options) {
       return `<div>
         <label class="form-label" for="action-field-${field.id}">${label}</label>
         ${inputHtml}
-        ${field.hint ? `<div class="text-[11px] text-slate-500 mt-1">${escapeHtml(field.hint)}</div>` : ""}
+        ${field.hint ? `<div class="text-xs text-slate-500 mt-1">${escapeHtml(field.hint)}</div>` : ""}
         <span class="form-error hidden" id="err-action-field-${field.id}"></span>
       </div>`;
     })
@@ -749,6 +828,8 @@ function closeActionModal() {
   $("action-modal").style.display = "none";
   state.actionHandler = null;
   state.actionFields = [];
+  const btn = $("action-modal-confirm");
+  if (btn) btn.disabled = false;
 }
 
 /** Gom giá trị các trường nghiệp vụ đang hiển thị trong hộp thoại. */
@@ -761,7 +842,7 @@ function collectActionFieldValues() {
   return values;
 }
 
-function confirmActionModal() {
+async function confirmActionModal() {
   const values = collectActionFieldValues();
   let invalid = null;
   (state.actionFields || []).forEach((fieldId) => {
@@ -782,20 +863,67 @@ function confirmActionModal() {
   });
   if (invalid) return;
 
+  const btn = $("action-modal-confirm");
+  const origHtml = btn ? btn.innerHTML : "Xác nhận";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<span class="inline-flex items-center gap-1.5"><i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i> Đang xử lý...</span>`;
+    refreshIcons();
+  }
+
   const handler = state.actionHandler;
   const actorId = selectedStaffId("TECHNICIAN");
-  closeActionModal();
-  if (typeof handler === "function") handler({ actorId, values });
+  try {
+    if (typeof handler === "function") {
+      await handler({ actorId, values });
+    }
+    closeActionModal();
+  } catch (err) {
+    console.error(err);
+    showToast("Đã có lỗi xảy ra khi thực hiện thao tác.", "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+      refreshIcons();
+    }
+  }
 }
 
 /* --------------------------- Điều hướng tab --------------------------- */
 /* Danh sách màn hình của ứng dụng (thứ tự này không quyết định menu; menu do HTML + data-perm quyết định). */
 const TABS = ["dashboard", "lookup", "customers", "products", "devices", "tickets", "ai", "accounts"];
 
+/* Sidebar toggle helpers */
+function toggleSidebar(force) {
+  const shell = $("app-shell");
+  const backdrop = $("sidebar-backdrop");
+  if (!shell) return;
+  const isOpen = shell.classList.contains("sidebar-open");
+  const next = force !== undefined ? force : !isOpen;
+  shell.classList.toggle("sidebar-open", next);
+  if (backdrop) backdrop.classList.toggle("hidden", !next);
+}
+
+function toggleSidebarCollapse() {
+  const shell = $("app-shell");
+  if (!shell) return;
+  shell.classList.toggle("sidebar-collapsed");
+  const icon = $("sidebar-collapse-icon");
+  if (icon) {
+    const isCollapsed = shell.classList.contains("sidebar-collapsed");
+    icon.setAttribute("data-lucide", isCollapsed ? "panel-left-open" : "panel-left-close");
+    refreshIcons();
+  }
+}
+
 function setupTabs() {
   document.querySelectorAll(".nav-tab-btn").forEach((btn) => {
     btn.addEventListener("click", () => {
-      switchTab(btn.getAttribute("data-tab"));
+      const tab = btn.getAttribute("data-tab");
+      // Bỏ qua các nút nhóm / dropdown toggle hoặc phần tử không gắn tab chuyển trang
+      if (!tab) return;
+      switchTab(tab);
       closeNavMore();
     });
   });
@@ -808,10 +936,32 @@ function setupTabs() {
 }
 
 function switchTab(tabId) {
-  if (!TABS.includes(tabId)) tabId = "dashboard";
+  if (!tabId || typeof tabId !== "string") return;
+  if (!TABS.includes(tabId)) {
+    console.warn(`[switchTab] Bỏ qua tab không hợp lệ: "${tabId}"`);
+    return;
+  }
   // Không cho mở màn hình mà vai trò hiện tại không có quyền (backend vẫn là nơi chặn thật).
-  if (TAB_PERMISSIONS[tabId] && !hasPerm(TAB_PERMISSIONS[tabId])) tabId = firstAllowedTab();
+  if (TAB_PERMISSIONS[tabId] && !hasPerm(TAB_PERMISSIONS[tabId])) {
+    const fallback = firstAllowedTab();
+    if (tabId === fallback) return;
+    tabId = fallback;
+  }
   state.currentTab = tabId;
+
+  const TAB_TITLES = {
+    dashboard: "Tổng quan",
+    tickets: "Phiếu bảo hành",
+    lookup: "Tra cứu bảo hành",
+    ai: "Hỗ trợ xác định lỗi",
+    customers: "Khách hàng",
+    products: "Danh mục máy",
+    devices: "Máy đã đăng ký",
+    accounts: "Tài khoản nhân viên",
+  };
+  const topTitle = $("topbar-page-title");
+  if (topTitle) topTitle.textContent = TAB_TITLES[tabId] || "BaoHanhAI";
+  toggleSidebar(false);
 
   document.querySelectorAll(".nav-tab-btn").forEach((btn) => {
     btn.classList.toggle("active", btn.getAttribute("data-tab") === tabId);
@@ -825,7 +975,15 @@ function switchTab(tabId) {
   if (tabId === "customers") loadCustomers();
   if (tabId === "products") loadProducts();
   if (tabId === "devices") loadDevices();
-  if (tabId === "tickets") { loadWizardOptions(); loadTickets(); }
+  if (tabId === "tickets") {
+    const role = state.session.user ? state.session.user.role : "";
+    if (role === "TECHNICIAN" && !state._preserveTicketScope) {
+      ticketOnlyMine = true;
+    }
+    state._preserveTicketScope = false;
+    loadWizardOptions();
+    loadTickets();
+  }
   if (tabId === "ai") { populateAiTicketSelect(); }
   if (tabId === "accounts") loadAccounts();
 
@@ -896,7 +1054,7 @@ async function loadReferenceData() {
     reviewer.innerHTML = staff
       .map((u) => `<option value="${u.id}">${escapeHtml(displayText(u.full_name))} (${escapeHtml(roleLabel(u.role))})${staffCanReview(u) ? "" : " – không có quyền xác nhận"}</option>`)
       .join("");
-    const actor = defaultActor(staff, "RECEPTIONIST");
+    const actor = defaultActor(staff, "TECHNICIAN");
     if (actor) reviewer.value = String(actor.id);
   }
 }
@@ -905,20 +1063,20 @@ async function loadReferenceData() {
    QUAN TRỌNG: đây là phần hiển thị. Quyết định bảo hành vẫn do backend (`warranty_end_date >= check_date`).
    ------------------------------------------------------------------------- */
 function warrantyInfoFor(endDateISO) {
-  if (!endDateISO) return { label: "Không xác định", textClass: "text-slate-300", dot: "⚪", days: null };
+  if (!endDateISO) return { label: "Không xác định", textClass: "text-slate-600", dot: "⚪", days: null };
   const end = new Date(String(endDateISO) + "T00:00:00");
-  if (isNaN(end.getTime())) return { label: "Không xác định", textClass: "text-slate-300", dot: "⚪", days: null };
+  if (isNaN(end.getTime())) return { label: "Không xác định", textClass: "text-slate-600", dot: "⚪", days: null };
   const today = new Date(todayISO() + "T00:00:00");
   const days = Math.round((end - today) / 86400000);
-  if (days >= 0) return { label: "Còn bảo hành", textClass: "text-emerald-300", dot: "🟢", days };
-  return { label: "Đã hết hạn", textClass: "text-rose-300", dot: "🔴", days };
+  if (days >= 0) return { label: "Còn bảo hành", textClass: "text-emerald-700", dot: "●", days };
+  return { label: "Đã hết hạn", textClass: "text-rose-700", dot: "●", days };
 }
 
 function warrantyStatusHtml(endDateISO) {
   const w = warrantyInfoFor(endDateISO);
   const detail = w.days === null ? "" : (w.days >= 0 ? `còn ${w.days} ngày` : `quá hạn ${Math.abs(w.days)} ngày`);
-  return `<span class="font-semibold ${w.textClass}">${w.dot} ${w.label}</span>` +
-    (detail ? `<span class="text-slate-400"> (${detail})</span>` : "");
+  return `<span class="inline-flex items-center gap-1.5 font-semibold ${w.textClass}"><span class="text-xs leading-none">${w.dot}</span> ${w.label}</span>` +
+    (detail ? `<span class="text-slate-500 font-normal"> (${detail})</span>` : "");
 }
 
 /* --------------------------- MÀN HÌNH: TỔNG QUAN ---------------------------
@@ -930,14 +1088,14 @@ function warrantyStatusHtml(endDateISO) {
 
 /** Màu chữ theo "tông" mà backend gán cho thẻ số liệu (mỗi trạng thái 1 màu cố định). */
 const TONE_TEXT = {
-  blue: "text-blue-400",
-  amber: "text-amber-400",
-  purple: "text-purple-400",
-  cyan: "text-cyan-400",
-  emerald: "text-emerald-400",
-  rose: "text-rose-400",
-  indigo: "text-indigo-400",
-  slate: "text-slate-200",
+  blue: "text-blue-700",
+  amber: "text-amber-700",
+  purple: "text-purple-700",
+  cyan: "text-cyan-700",
+  emerald: "text-emerald-700",
+  rose: "text-rose-700",
+  indigo: "text-indigo-700",
+  slate: "text-slate-700",
 };
 
 function toneText(tone) {
@@ -951,35 +1109,141 @@ function num(value) {
 /** Đầu trang: tiêu đề + vai trò + phạm vi số liệu (backend đặt theo tài khoản). */
 function renderDashHeader(wb) {
   const title = $("dash-title");
-  if (title) title.textContent = wb.title || "Tổng quan";
+  if (title) title.textContent = "Tổng quan";
   const subtitle = $("dash-subtitle");
-  if (subtitle) subtitle.textContent = wb.subtitle || "";
+  if (subtitle) {
+    const scopeText = wb.scope_label || (wb.scope && wb.scope !== "DEFAULT" ? wb.scope : "Toàn trung tâm");
+    subtitle.textContent = `Phạm vi dữ liệu: ${scopeText}`;
+  }
   const roleChip = $("dash-role-chip");
-  if (roleChip) roleChip.textContent = `${wb.role_label || roleLabel(wb.role)} • ${state.session.user ? "@" + state.session.user.username : ""}`;
+  if (roleChip) {
+    roleChip.textContent = "";
+    roleChip.classList.add("hidden");
+  }
   const scopeChip = $("dash-scope-chip");
   if (scopeChip) {
     const show = wb.scope && wb.scope !== "DEFAULT";
-    scopeChip.textContent = `Phạm vi: ${wb.scope_label || wb.scope}`;
+    scopeChip.textContent = wb.scope_label || wb.scope;
     scopeChip.classList.toggle("hidden", !show);
   }
 }
 
-/** Thẻ số liệu theo vai trò; bấm thẻ có trạng thái thì mở danh sách phiếu đã lọc. */
+/** Khi bấm thẻ số liệu trên bảng điều khiển: lọc đúng nhóm trạng thái của bảng và cuộn xuống */
+function onDashCardClick(status) {
+  if (!status) return;
+  if (status === "ALL") {
+    setDashFilterStatus("ALL");
+  } else if (status === "PROCESSING" || status.includes("RECEIVED") || status.includes("INSPECTING") || status.includes("REPAIRING")) {
+    setDashFilterStatus("PROCESSING");
+  } else if (status === "WAITING_RETURN" || status.includes("COMPLETED") || status.includes("REJECTED")) {
+    setDashFilterStatus("WAITING_RETURN");
+  } else if (status === "RETURNED") {
+    setDashFilterStatus("RETURNED");
+  } else {
+    setDashFilterStatus(status);
+  }
+  const tableEl = $("dash-active-title");
+  if (tableEl) {
+    tableEl.scrollIntoView({ behavior: "smooth", block: "start" });
+  }
+}
+
+/** Xây dựng đúng 4 thẻ số liệu chuẩn theo yêu cầu: Tổng phiếu, Đang xử lý, Chờ trả máy, Đã trả máy */
+function buildDashboardFourCards(wb, view) {
+  if (!wb) return [];
+  // Nếu backend đã trả sẵn đúng 4 thẻ chuẩn
+  if (Array.isArray(wb.cards) && wb.cards.length === 4) {
+    return wb.cards;
+  }
+  const totals = wb.totals || {};
+  const isMine = view === "mine" || (view !== "all" && wb.role !== "MANAGER" && wb.scope === "MINE");
+  const scopeLabel = wb.scope_label || (isMine ? (wb.role === "RECEPTIONIST" ? "Việc tại quầy" : "Phiếu được giao") : "Toàn trung tâm");
+
+  const rec = Number(totals.received || totals.RECEIVED || 0);
+  const insp = Number(totals.inspecting || totals.INSPECTING || 0);
+  const rep = Number(totals.repairing || totals.REPAIRING || 0);
+  const comp = Number(totals.completed || totals.COMPLETED || 0);
+  const rej = Number(totals.rejected || totals.REJECTED || 0);
+  const ret = Number(totals.returned || totals.RETURNED || 0);
+
+  const inProgress = rec + insp + rep;
+  const waitingReturn = comp + rej;
+  const returned = ret;
+  const total = inProgress + waitingReturn + returned;
+
+  return [
+    {
+      key: "TOTAL",
+      label: "Tổng phiếu",
+      count: total,
+      description: `Tất cả phiếu (${scopeLabel})`,
+      tone: "indigo",
+      status: "ALL",
+      icon: "files",
+    },
+    {
+      key: "IN_PROGRESS",
+      label: "Đang xử lý",
+      count: inProgress,
+      description: `Tiếp nhận: ${rec} • Kiểm tra: ${insp} • Sửa: ${rep}`,
+      tone: "blue",
+      status: "PROCESSING",
+      icon: "hammer",
+    },
+    {
+      key: "WAITING_RETURN",
+      label: "Chờ trả máy",
+      count: waitingReturn,
+      description: `Hoàn tất: ${comp} • Từ chối: ${rej}`,
+      tone: "amber",
+      status: "WAITING_RETURN",
+      icon: "clock",
+    },
+    {
+      key: "RETURNED",
+      label: "Đã trả máy",
+      count: returned,
+      description: "Đã bàn giao cho khách và đóng phiếu",
+      tone: "emerald",
+      status: "RETURNED",
+      icon: "check-circle-2",
+    },
+  ];
+}
+
+/** Thẻ số liệu theo vai trò: số nổi bật, nhãn ngắn, viền trung tính gọn gàng */
 function renderDashCards(cards) {
   const box = $("dash-cards");
   if (!box) return;
   const items = Array.isArray(cards) ? cards : [];
   if (!items.length) {
-    box.innerHTML = '<div class="text-xs text-slate-500 col-span-full">Chưa có số liệu.</div>';
+    box.innerHTML = '<div class="text-sm text-slate-500 col-span-full">Chưa có số liệu.</div>';
     return;
   }
+
+  const iconStyles = {
+    RETURNED: "bg-emerald-50 text-emerald-600 border-emerald-100",
+    WAITING_RETURN: "bg-cyan-50 text-cyan-600 border-cyan-100",
+    "COMPLETED,REJECTED": "bg-cyan-50 text-cyan-600 border-cyan-100",
+    PROCESSING: "bg-amber-50 text-amber-600 border-amber-100",
+    "RECEIVED,INSPECTING,REPAIRING": "bg-amber-50 text-amber-600 border-amber-100",
+    RECEIVED: "bg-indigo-50 text-indigo-600 border-indigo-100",
+  };
+
   box.innerHTML = items
     .map((card) => {
-      const clickable = card.status ? `onclick="openTicketsFiltered('${card.status}')" role="button" tabindex="0"` : "";
-      return `<div class="glass-panel glass-panel-hover rounded-xl p-4 border border-slate-800 dash-card" ${clickable}>
-        <div class="flex items-center justify-between text-xs mb-2 ${toneText(card.tone)}"><span>${escapeHtml(card.label)}</span><i data-lucide="circle-dot" class="w-4 h-4"></i></div>
-        <div class="text-2xl font-bold font-mono ${toneText(card.tone)}">${num(card.count)}</div>
-        <div class="text-[11px] text-slate-500 mt-1">${escapeHtml(card.description || "")}</div>
+      const clickable = card.status ? `onclick="onDashCardClick('${card.status}')" role="button" tabindex="0"` : "";
+      const iconName = card.icon || (card.status === "RETURNED" ? "check-circle-2" : (card.status === "WAITING_RETURN" || card.status === "COMPLETED,REJECTED" ? "clock" : (card.status === "PROCESSING" || card.status === "RECEIVED,INSPECTING,REPAIRING" ? "wrench" : "circle-dot")));
+      const iconCls = iconStyles[card.status] || "bg-indigo-50 text-indigo-600 border-indigo-100";
+      return `<div class="bg-white rounded-xl p-4 sm:p-5 border border-slate-200 shadow-sm hover:border-indigo-300 hover:shadow-md transition-all dash-card cursor-pointer group" ${clickable} title="Bấm để lọc bảng phiếu bên dưới">
+        <div class="flex items-center justify-between mb-3">
+          <span class="text-xs font-bold text-slate-500 uppercase tracking-wider group-hover:text-indigo-600 transition-colors">${escapeHtml(card.label)}</span>
+          <div class="w-8 h-8 rounded-lg flex items-center justify-center border ${iconCls} transition-transform group-hover:scale-105">
+            <i data-lucide="${iconName}" class="w-4 h-4"></i>
+          </div>
+        </div>
+        <div class="text-3xl font-extrabold text-slate-900 tracking-tight leading-none">${num(card.count)}</div>
+        <div class="text-xs text-slate-500 mt-2.5 font-normal truncate">${escapeHtml(card.description || "")}</div>
       </div>`;
     })
     .join("");
@@ -1003,7 +1267,7 @@ function renderDashQuickActions(wb) {
     .map((action) => `<button class="btn ${action.primary ? "btn-primary" : "btn-secondary"} justify-center btn-stack text-left"
         onclick="dashQuickAction('${action.key}')" title="${escapeHtml(action.description || action.label)}">
         <span class="inline-flex items-center gap-1.5"><i data-lucide="${escapeHtml(action.icon || "arrow-right")}" class="w-4 h-4"></i> ${escapeHtml(action.label)}</span>
-        <span class="text-[10px] font-normal opacity-80">${escapeHtml(action.description || "")}</span>
+        <span class="text-xs font-normal opacity-90">${escapeHtml(action.description || "")}</span>
       </button>`)
     .join("");
   refreshIcons();
@@ -1036,8 +1300,11 @@ function dashLookup() {
  * Mọi số liệu đều do backend tính (bao gồm cả việc lọc "việc của tôi").
  */
 async function loadDashboard(showSuccessMessage = false, scope = null) {
-  const query = scope ? `?scope=${encodeURIComponent(scope)}` : "";
+  const currentEpoch = state.sessionEpoch;
+  const effectiveScope = scope !== null ? scope : (state.dashView === "mine" ? "MINE" : (state.dashView === "all" ? "ALL" : null));
+  const query = effectiveScope ? `?scope=${encodeURIComponent(effectiveScope)}` : "";
   const res = await apiFetch(`/api/v1/warranty-tickets/workboard${query}`);
+  if (currentEpoch !== state.sessionEpoch) return;
   if (!res.ok) {
     toastError(res, "Không tải được bảng điều khiển công việc.");
     return;
@@ -1047,13 +1314,20 @@ async function loadDashboard(showSuccessMessage = false, scope = null) {
 
   renderDashHeader(wb);
   renderDashQuickActions(wb);
-  renderDashCards(wb.cards);
+  const fourCards = buildDashboardFourCards(wb, state.dashView);
+  renderDashCards(fourCards);
   renderWorkGroups(wb.groups);
   renderDashFocus(wb);
   renderDashAttention(wb);
   renderDashNotes(wb);
   renderDashViewButtons(wb);
   renderDashTable(wb, state.dashView);
+
+  // Cập nhật số liệu phụ Khách hàng & Thiết bị
+  const custCountEl = $("dash-cust-count");
+  if (custCountEl && wb.totals) custCountEl.textContent = num(wb.totals.customers);
+  const devCountEl = $("dash-device-count");
+  if (devCountEl && wb.totals) devCountEl.textContent = num(wb.totals.devices);
 
   // Quản lý xem thêm biểu đồ phân bổ + các chip lọc nhanh theo trạng thái
   const chartPanel = $("dash-chart-panel");
@@ -1086,33 +1360,47 @@ async function setDashView(view) {
   renderDashTable(wb, view);
 }
 
-/** Nút chuyển cách xem: Quản lý xem toàn hệ thống / việc cần chú ý; nhân viên xem việc của tôi / toàn bộ. */
+/** Nút chuyển cách xem theo vai trò: Quản lý (Toàn trung tâm / Việc cần chú ý), Tiếp nhận (Việc tại quầy / Toàn bộ phiếu), KTV (Phiếu được giao / Toàn bộ phiếu). */
 function renderDashViewButtons(wb) {
   const box = $("dash-view-buttons");
   if (!box) return;
-  const role = wb.role || "";
+  const role = wb.role || (state.session.user && state.session.user.role) || "";
   const view = state.dashView;
-  const defs = role === "MANAGER"
-    ? [
-        { key: "all", label: "Toàn bộ hệ thống", icon: "layout-list" },
-        { key: "attention", label: "Việc cần chú ý", icon: "alert-triangle" },
-      ]
-    : [
-        { key: "mine", label: "Việc của tôi", icon: "user-check" },
-        { key: "all", label: "Toàn bộ phiếu", icon: "layout-list" },
-      ];
+  let defs = [];
+  if (role === "MANAGER") {
+    defs = [
+      { key: "all", label: "Toàn trung tâm", icon: "layout-list" },
+      { key: "attention", label: "Việc cần chú ý", icon: "alert-triangle" },
+    ];
+  } else if (role === "RECEPTIONIST") {
+    defs = [
+      { key: "mine", label: "Việc tại quầy", icon: "user-check" },
+      { key: "all", label: "Toàn bộ phiếu", icon: "layout-list" },
+    ];
+  } else if (role === "TECHNICIAN") {
+    defs = [
+      { key: "mine", label: "Phiếu được giao", icon: "user-check" },
+      { key: "all", label: "Toàn bộ phiếu", icon: "layout-list" },
+    ];
+  } else {
+    defs = [
+      { key: "mine", label: "Việc của tôi", icon: "user-check" },
+      { key: "all", label: "Toàn bộ phiếu", icon: "layout-list" },
+    ];
+  }
   const defaultKey = role === "MANAGER" ? "all" : "mine";
   const activeKey = view === "attention" ? "attention" : (view === "all" || view === "mine" ? view : defaultKey);
   box.innerHTML = defs
     .map((def) => `<button class="btn ${def.key === activeKey ? "btn-primary" : "btn-secondary"} btn-sm" onclick="setDashView('${def.key}')">
         <i data-lucide="${def.icon}" class="w-3.5 h-3.5"></i> ${def.label}</button>`)
-    .join("") +
-    `<button class="btn btn-secondary btn-sm" onclick="openTicketsFiltered('')"><i data-lucide="arrow-right" class="w-3.5 h-3.5"></i> Xem tất cả phiếu</button>`;
+    .join("");
   refreshIcons();
 }
 
-/** Mở màn "Phiếu bảo hành" với bộ lọc trạng thái (dùng từ bảng điều khiển). */
+/** Mở màn "Phiếu bảo hành" với bộ lọc trạng thái (dùng từ bảng điều khiển), giữ nguyên phạm vi người dùng đang chọn. */
 function openTicketsFiltered(status) {
+  state._preserveTicketScope = true;
+  ticketOnlyMine = state.dashUseMine;
   switchTab("tickets");
   applyStatusFilter(status || "ALL");
 }
@@ -1133,7 +1421,7 @@ function dashQuickAction(key) {
       }, 300);
       return;
     case "waiting_return":
-      openTicketsFiltered("WAITING_RETURN");
+      openTicketsFiltered("COMPLETED,REJECTED");
       return;
     case "waiting_inspect":
       openTicketsFiltered("RECEIVED");
@@ -1166,6 +1454,9 @@ function dashQuickAction(key) {
  * (ví dụ kỹ thuật viên: "Bắt đầu kiểm tra") khi hành động được phép đúng như nhóm mong đợi.
  */
 function groupActionLabel(group, row) {
+  if (row.primary_action && row.primary_action.target === "ASSIGN") {
+    return row.primary_action.button_label || "Phân công KTV";
+  }
   const target = row.primary_action ? row.primary_action.target : null;
   if (group.action_label && (!group.action_target || group.action_target === target)) {
     return group.action_label;
@@ -1176,7 +1467,7 @@ function groupActionLabel(group, row) {
 /** True nếu bấm nút trong nhóm sẽ chuyển trạng thái (ngược lại chỉ mở phiếu xem). */
 function groupActionIsTransition(group, row) {
   return row.action_kind === "transition" && !!row.primary_action &&
-    (!group.action_target || group.action_target === row.primary_action.target);
+    (!group.action_target || group.action_target === row.primary_action.target || row.primary_action.target === "ASSIGN");
 }
 
 /** Nhóm công việc: số lượng + danh sách phiếu cần xử lý ngay (mỗi phiếu 1 nút hành động). */
@@ -1187,10 +1478,10 @@ function renderWorkGroups(groups) {
   const hint = $("dash-workload-hint");
   const title = $("dash-workload-title");
   if (title) {
-    title.innerHTML = '<i data-lucide="list-checks" class="w-4 h-4 text-amber-400"></i> Công việc theo bước';
+    title.innerHTML = '<i data-lucide="list-checks" class="w-4 h-4 text-indigo-600"></i> Công việc theo bước';
   }
   if (!items.length) {
-    box.innerHTML = '<div class="text-xs text-slate-500">Vai trò này chưa có nhóm công việc nào.</div>';
+    box.innerHTML = '<div class="text-sm text-slate-500">Vai trò này chưa có nhóm công việc nào.</div>';
     if (hint) hint.textContent = "";
     return;
   }
@@ -1200,11 +1491,11 @@ function renderWorkGroups(groups) {
       const head = `<button type="button" class="w-full text-left" onclick="openTicketsFiltered('${escapeHtml(group.status_filter || "")}')"
               title="Mở danh sách phiếu ở bước này">
           <div class="flex items-center justify-between gap-2">
-            <span class="text-xs font-semibold text-slate-200">${escapeHtml(group.label)}</span>
-            <span class="text-lg font-bold font-mono ${group.count > 0 ? toneText(group.tone) : "text-slate-600"}">${group.count}</span>
+            <span class="text-sm font-bold text-slate-800">${escapeHtml(group.label)}</span>
+            <span class="text-lg font-bold font-mono ${group.count > 0 ? toneText(group.tone) : "text-slate-400"}">${group.count}</span>
           </div>
-          <div class="text-[11px] text-slate-500 mt-1">${escapeHtml(group.description || "")}</div>
-          <div class="text-[10px] text-slate-600 mt-1">Phạm vi: ${escapeHtml(group.scope_label || "")}</div>
+          <div class="text-xs text-slate-500 mt-1">${escapeHtml(group.description || "")}</div>
+          <div class="text-xs text-slate-400 mt-1">Phạm vi: ${escapeHtml(group.scope_label || "")}</div>
         </button>`;
       const rowHtml = rows.length
         ? rows
@@ -1213,8 +1504,8 @@ function renderWorkGroups(groups) {
               const target = isTransition && row.primary_action ? row.primary_action.target : null;
               return `<div class="dash-work-item">
                 <div class="min-w-0">
-                  <div class="font-mono text-indigo-300 truncate">${escapeHtml(row.ticket_code)}</div>
-                  <div class="text-slate-400 truncate">${escapeHtml(displayText(row.customer_name) || "–")} &bull; ${escapeHtml(displayText(row.product_name) || row.serial_number || "")}</div>
+                  <div class="font-semibold text-slate-900 truncate">${escapeHtml(row.ticket_code)}</div>
+                  <div class="text-xs text-slate-500 truncate">${escapeHtml(displayText(row.customer_name) || "–")} &bull; ${escapeHtml(displayText(row.product_name) || row.serial_number || "")}</div>
                 </div>
                 <button class="btn ${isTransition ? "btn-primary" : "btn-secondary"} btn-sm shrink-0"
                         onclick="handleTicketAction(${row.id}, ${target ? `'${target}'` : "null"})">
@@ -1223,8 +1514,8 @@ function renderWorkGroups(groups) {
               </div>`;
             })
             .join("")
-        : '<div class="text-[11px] text-slate-500">Không còn phiếu nào ở bước này.</div>';
-      return `<div class="p-3 rounded-xl border border-slate-800 bg-slate-900/70 flex flex-col gap-2">${head}${rowHtml}</div>`;
+        : '<div class="text-xs text-slate-500">Không còn phiếu nào ở bước này.</div>';
+      return `<div class="p-3.5 rounded-xl border border-slate-200 bg-slate-50 flex flex-col gap-2">${head}${rowHtml}</div>`;
     })
     .join("");
   if (hint) {
@@ -1241,24 +1532,24 @@ function renderDashFocus(wb) {
   const hint = $("dash-focus-hint");
   if (hint) hint.textContent = `Thứ tự ưu tiên của ${wb.role_label || roleLabel(wb.role)} • ${rows.length} phiếu`;
   if (!rows.length) {
-    box.innerHTML = '<div class="text-xs text-emerald-300/90">Bạn không còn phiếu nào đang chờ xử lý.</div>';
+    box.innerHTML = '<div class="text-sm text-emerald-700 font-medium">Bạn không còn phiếu nào đang chờ xử lý.</div>';
     return;
   }
   box.innerHTML = rows
     .map((row, index) => {
       const isTransition = row.action_kind === "transition" && row.primary_action;
-      const target = isTransition ? row.primary_action.target : null;
+      const target = isTransition && row.primary_action ? row.primary_action.target : null;
       return `<div class="dash-focus-row">
         <span class="dash-focus-index">${index + 1}</span>
         <div class="min-w-0 flex-1">
           <div class="flex items-center gap-2 flex-wrap">
-            <span class="font-mono font-semibold text-indigo-300">${escapeHtml(row.ticket_code)}</span>
+            <span class="font-semibold text-slate-900">${escapeHtml(row.ticket_code)}</span>
             ${statusBadge(row.status)}
-            <span class="text-[11px] text-slate-500 font-mono">${escapeHtml(row.serial_number || "–")}</span>
-            <span class="text-[11px] text-slate-400">${escapeHtml(displayText(row.product_name) || "")}</span>
+            <span class="text-xs text-slate-500">${escapeHtml(row.serial_number || "–")}</span>
+            <span class="text-xs text-slate-700 font-medium">${escapeHtml(displayText(row.product_name) || "")}</span>
           </div>
-          <div class="text-[11px] text-slate-400 mt-0.5 truncate">
-            ${escapeHtml(displayText(row.customer_name) || "–")} &bull; ${escapeHtml(row.customer_phone || "")} &bull; phụ trách: ${escapeHtml(ticketHandlerName(row))}
+          <div class="text-xs text-slate-600 mt-1 truncate">
+            ${escapeHtml(displayText(row.customer_name) || "–")} &bull; ${escapeHtml(row.customer_phone || "")} &bull; KTV: <span class="font-medium text-slate-800">${escapeHtml(ticketTechnicianName(row))}</span>
           </div>
         </div>
         <button class="btn ${isTransition ? "btn-primary" : "btn-secondary"} btn-sm shrink-0"
@@ -1283,18 +1574,18 @@ function renderDashAttention(wb) {
     return;
   }
   if (!rows.length) {
-    box.innerHTML = '<div class="text-xs text-emerald-300/90">Không có phiếu nào cần chú ý.</div>';
+    box.innerHTML = '<div class="text-sm text-emerald-700 font-medium">Không có phiếu nào cần chú ý.</div>';
     return;
   }
   box.innerHTML = rows
     .map(
       (row) => `<button type="button" class="dash-attention-row" onclick="openTicketModal(${row.ticket_id})">
         <div class="flex items-center justify-between gap-2">
-          <span class="font-mono text-indigo-300">${escapeHtml(row.ticket_code)}</span>
+          <span class="font-semibold text-slate-900">${escapeHtml(row.ticket_code)}</span>
           ${statusBadge(row.status)}
         </div>
-        <div class="text-slate-200 mt-1">${escapeHtml(displayText(row.customer_name) || "–")} &bull; ${escapeHtml(displayText(row.product_name) || row.serial_number || "")}</div>
-        <div class="text-amber-200/90 mt-1">${escapeHtml(row.reason)}</div>
+        <div class="text-slate-800 font-semibold mt-1">${escapeHtml(displayText(row.customer_name) || "–")} &bull; ${escapeHtml(displayText(row.product_name) || row.serial_number || "")}</div>
+        <div class="text-amber-800 font-medium text-xs mt-1">${escapeHtml(row.reason)}</div>
       </button>`
     )
     .join("");
@@ -1315,6 +1606,28 @@ function applyStatusFilter(status) {
   loadTickets(value);
 }
 
+/** Mở modal chi tiết thiết bị theo ID hoặc Serial. */
+async function openDeviceBySerialOrId(instanceId, serial) {
+  if (instanceId) {
+    if (!state.devices.length) await loadDevices();
+    const d = state.devices.find((x) => x.id === instanceId);
+    if (d) return openDeviceDetailModal(instanceId);
+  }
+  if (serial) {
+    if (!state.devices.length) await loadDevices();
+    let d = state.devices.find((x) => x.serial_number === serial);
+    if (!d) {
+      const res = await apiFetch(`/api/v1/product-instances/search?query=${encodeURIComponent(serial)}`);
+      if (res.ok && Array.isArray(res.data) && res.data.length) {
+        d = res.data[0];
+        state.devices.push(d);
+      }
+    }
+    if (d) return openDeviceDetailModal(d.id);
+  }
+  showToast("Không tìm thấy thông tin thiết bị.", "warning");
+}
+
 /** Nút hành động phụ của một dòng (chỉ hiện khi thực sự có bước khác được phép). */
 function rowExtraActionsHtml(row) {
   const extras = (Array.isArray(row.available_actions) ? row.available_actions : []).filter(
@@ -1322,36 +1635,113 @@ function rowExtraActionsHtml(row) {
   );
   if (!extras.length) return "";
   return `<details class="row-more">
-      <summary class="row-more-summary">Thêm</summary>
+      <summary class="row-more-summary" title="Xem các thao tác khác">
+        <i data-lucide="more-horizontal" class="w-4 h-4"></i>
+        <span>Thao tác khác</span>
+      </summary>
       <div class="row-more-menu">
         ${extras
           .map(
             (action) =>
-              `<button class="btn btn-secondary btn-sm w-full justify-start" onclick="handleTicketAction(${row.id}, '${action.target}')">${escapeHtml(action.button_label)}</button>`
+              `<button class="btn btn-secondary btn-sm w-full justify-start text-xs" onclick="handleTicketAction(${row.id}, '${action.target}')">
+                <i data-lucide="arrow-right" class="w-3.5 h-3.5"></i>
+                <span>${escapeHtml(action.button_label)}</span>
+              </button>`
           )
           .join("")}
       </div>
     </details>`;
 }
 
-/** Bảng "Phiếu đang xử lý" / "Việc cần chú ý" - mỗi dòng 1 hành động chính theo quyền. */
+/** Hiển thị đúng 1 thông điệp ngắn gọn trong cột "Việc cần làm" (phân biệt màu trung tính / vàng / đỏ). */
+function renderNextActionCell(row, attentionReason) {
+  // 1. Màu đỏ: lỗi thao tác hoặc vấn đề thực sự cần xử lý ngay (KTV đề xuất từ chối)
+  if (row.rejection_proposal_note || (attentionReason && attentionReason.includes("đề xuất từ chối"))) {
+    return `<div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-rose-50 text-rose-800 border border-rose-200 text-xs font-semibold">
+        <i data-lucide="alert-circle" class="w-3.5 h-3.5 text-rose-600 shrink-0"></i>
+        <span>KTV đề xuất từ chối bảo hành</span>
+      </div>`;
+  }
+
+  // 2. Màu vàng: thiếu phân công, thiếu kết quả kiểm tra hoặc dữ liệu cần bổ sung
+  if (!row.assigned_technician_id) {
+    return `<div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 text-amber-900 border border-amber-200 text-xs font-semibold">
+        <i data-lucide="alert-triangle" class="w-3.5 h-3.5 text-amber-600 shrink-0"></i>
+        <span>Chưa phân công KTV</span>
+      </div>`;
+  }
+
+  if (row.status === "INSPECTING") {
+    const hasDiag = Boolean((row.diagnosis_note || "").trim());
+    const hasElig = row.is_warranty_eligible !== null && row.is_warranty_eligible !== undefined;
+    if (!hasDiag || !hasElig) {
+      return `<div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 text-amber-900 border border-amber-200 text-xs font-semibold">
+          <i data-lucide="help-circle" class="w-3.5 h-3.5 text-amber-600 shrink-0"></i>
+          <span>Cần ghi nhận chẩn đoán & ĐKBH</span>
+        </div>`;
+    }
+    return `<div class="inline-flex items-center gap-1.5 text-slate-700 text-sm font-medium">
+        <i data-lucide="check" class="w-4 h-4 text-emerald-600 shrink-0"></i>
+        <span>Đã có chẩn đoán, chuẩn bị sửa</span>
+      </div>`;
+  }
+
+  if (row.status === "REPAIRING") {
+    const hasRepair = Boolean((row.repair_content || "").trim());
+    const hasPass = row.repair_test_passed === true;
+    if (!hasRepair || !hasPass) {
+      return `<div class="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-amber-50 text-amber-900 border border-amber-200 text-xs font-semibold">
+          <i data-lucide="wrench" class="w-3.5 h-3.5 text-amber-600 shrink-0"></i>
+          <span>Cần ghi nội dung sửa & kiểm tra</span>
+        </div>`;
+    }
+    return `<div class="inline-flex items-center gap-1.5 text-slate-700 text-sm font-medium">
+        <i data-lucide="check" class="w-4 h-4 text-emerald-600 shrink-0"></i>
+        <span>Đã sửa xong, chuẩn bị hoàn tất</span>
+      </div>`;
+  }
+
+  // 3. Màu trung tính: thông tin tiến độ bình thường (không coi mọi phiếu chờ trả là cảnh báo)
+  if (row.status === "COMPLETED") {
+    return `<div class="inline-flex items-center gap-1.5 text-slate-700 text-sm font-medium">
+        <i data-lucide="clock" class="w-4 h-4 text-slate-500 shrink-0"></i>
+        <span>Đang chờ khách nhận máy</span>
+      </div>`;
+  }
+
+  if (row.status === "REJECTED") {
+    return `<div class="inline-flex items-center gap-1.5 text-slate-700 text-sm font-medium">
+        <i data-lucide="clock" class="w-4 h-4 text-slate-500 shrink-0"></i>
+        <span>Đang chờ trả lại máy cho khách</span>
+      </div>`;
+  }
+
+  if (row.status === "RECEIVED") {
+    return `<div class="inline-flex items-center gap-1.5 text-slate-700 text-sm font-medium">
+        <i data-lucide="user-check" class="w-4 h-4 text-slate-500 shrink-0"></i>
+        <span>Đã giao KTV, chờ bắt đầu kiểm tra</span>
+      </div>`;
+  }
+
+  if (row.status === "RETURNED") {
+    return `<div class="inline-flex items-center gap-1.5 text-slate-500 text-sm">
+        <i data-lucide="check-circle-2" class="w-4 h-4 text-slate-400 shrink-0"></i>
+        <span>Phiếu đã đóng</span>
+      </div>`;
+  }
+
+  return `<div class="text-slate-600 text-sm font-medium">${escapeHtml(statusLabel(row.status))}</div>`;
+}
+
+/** Bảng "Phiếu cần xử lý" / "Danh sách phiếu" / "Việc cần chú ý" - mỗi dòng 1 hành động chính theo quyền. */
 function renderDashTable(wb, view) {
   const tbody = $("dash-active-body");
   if (!tbody) return;
   const isAttention = view === "attention";
   const lastCol = $("dash-active-last-col");
-  if (lastCol) lastCol.textContent = isAttention ? "Lý do cần chú ý" : "Loại lỗi";
+  if (lastCol) lastCol.textContent = isAttention ? "Lý do cần chú ý" : "Việc cần làm";
 
   const useMine = !isAttention && (view === "mine" || (view !== "all" && wb.role !== "MANAGER"));
-  const title = $("dash-active-title");
-  if (title) {
-    title.innerHTML = isAttention
-      ? '<i data-lucide="alert-triangle" class="w-4 h-4 text-amber-400"></i> Việc cần chú ý'
-      : `<i data-lucide="hammer" class="w-4 h-4 text-cyan-400"></i> ${escapeHtml(
-          useMine ? "Phiếu tôi đang xử lý" : (wb.table_title || "Phiếu đang xử lý")
-        )}`;
-  }
-
   const rows = isAttention
     ? (Array.isArray(wb.attention) ? wb.attention : []).map((item) => ({
         ...item,
@@ -1360,44 +1750,169 @@ function renderDashTable(wb, view) {
       }))
     : (useMine ? wb.my_tickets || [] : wb.active_tickets || []);
 
-  if (!rows.length) {
-    setTableMessage(
-      "dash-active-body",
-      8,
-      isAttention
-        ? "Không có phiếu nào cần chú ý."
-        : useMine
-          ? 'Bạn hiện không có phiếu nào đang xử lý. Bấm "Toàn bộ phiếu" để xem tất cả.'
-          : "Hiện không có phiếu nào đang xử lý."
-    );
+  state.dashActiveRows = rows;
+  state.dashAttention = Array.isArray(wb.attention) ? wb.attention : [];
+  state.dashIsAttention = isAttention;
+  state.dashUseMine = useMine;
+
+  renderFilteredDashTable();
+}
+
+function setDashFilterStatus(status) {
+  state.dashFilterStatus = status || "ALL";
+  document.querySelectorAll(".dash-filter-btn").forEach((btn) => {
+    const active = btn.getAttribute("data-dash-filter") === state.dashFilterStatus;
+    btn.classList.toggle("btn-primary", active);
+    btn.classList.toggle("btn-secondary", !active);
+  });
+  renderFilteredDashTable();
+}
+
+function filterDashTable() {
+  const input = $("dash-table-search");
+  state.dashSearchQuery = input ? input.value : "";
+  renderFilteredDashTable();
+}
+
+function renderFilteredDashTable() {
+  const tbody = $("dash-active-body");
+  if (!tbody) return;
+  const rows = state.dashActiveRows || [];
+  const isAttention = state.dashIsAttention;
+  const useMine = state.dashUseMine;
+  const wb = state.workboard || {};
+  const role = (state.session.user && state.session.user.role) || wb.role || "";
+
+  const attentionList = state.dashAttention || [];
+  const attentionMap = new Map();
+  attentionList.forEach((a) => {
+    attentionMap.set(a.ticket_id || a.id, a.reason);
+  });
+
+  const query = (state.dashSearchQuery || "").toLowerCase().trim();
+  const filterStatus = state.dashFilterStatus || "ALL";
+
+  // Cập nhật tiêu đề bảng theo bộ lọc và phạm vi
+  const title = $("dash-active-title");
+  if (title) {
+    const scopeLabel = wb.scope_label || (useMine ? (role === "RECEPTIONIST" ? "Việc tại quầy" : "Phiếu được giao") : "Toàn trung tâm");
+    if (isAttention) {
+      title.innerHTML = `<i data-lucide="alert-triangle" class="w-5 h-5 text-amber-500"></i> Việc cần chú ý (${escapeHtml(scopeLabel)})`;
+    } else if (filterStatus === "ALL" || filterStatus === "RETURNED") {
+      title.innerHTML = `<i data-lucide="clipboard-list" class="w-5 h-5 text-indigo-600"></i> Danh sách phiếu (${escapeHtml(scopeLabel)})`;
+    } else {
+      title.innerHTML = `<i data-lucide="clipboard-list" class="w-5 h-5 text-indigo-600"></i> ${escapeHtml(
+        useMine ? (role === "RECEPTIONIST" ? "Phiếu tại quầy tiếp nhận" : "Phiếu được giao cho tôi") : (wb.table_title || "Phiếu cần xử lý")
+      )} (${escapeHtml(scopeLabel)})`;
+    }
+  }
+
+  let filtered = rows;
+  if (!isAttention) {
+    if (filterStatus === "PROCESSING") {
+      filtered = filtered.filter((r) => ["RECEIVED", "INSPECTING", "REPAIRING"].includes(r.status));
+    } else if (filterStatus === "WAITING_RETURN") {
+      filtered = filtered.filter((r) => ["COMPLETED", "REJECTED"].includes(r.status));
+    } else if (filterStatus !== "ALL") {
+      filtered = filtered.filter((r) => r.status === filterStatus);
+    }
+  }
+
+  if (query) {
+    filtered = filtered.filter((r) => {
+      const code = String(r.ticket_code || "").toLowerCase();
+      const serial = String(r.serial_number || "").toLowerCase();
+      const cust = String(r.customer_name || "").toLowerCase();
+      const phone = String(r.customer_phone || "").toLowerCase();
+      const prod = String(r.product_name || "").toLowerCase();
+      return (
+        code.includes(query) ||
+        serial.includes(query) ||
+        cust.includes(query) ||
+        phone.includes(query) ||
+        prod.includes(query)
+      );
+    });
+  }
+
+  // Cập nhật số kết quả phù hợp trên thanh lọc
+  const filterCountEl = $("dash-filter-count");
+  if (filterCountEl) {
+    filterCountEl.classList.remove("hidden");
+    if (filtered.length !== rows.length) {
+      filterCountEl.textContent = `Hiển thị ${num(filtered.length)} / ${num(rows.length)} phiếu (đang lọc)`;
+    } else {
+      filterCountEl.textContent = `Hiển thị ${num(rows.length)} / ${num(rows.length)} phiếu`;
+    }
+  }
+
+  if (!filtered.length) {
+    let emptyMsg = "Hiện không có phiếu nào cần xử lý.";
+    if (query || filterStatus !== "ALL") {
+      emptyMsg = "Không tìm thấy phiếu nào phù hợp với bộ lọc.";
+    } else if (isAttention) {
+      emptyMsg = "Không có phiếu nào cần chú ý.";
+    } else if (role === "TECHNICIAN" && useMine) {
+      emptyMsg = 'Bạn chưa được phân công phiếu nào. Bấm "Toàn bộ phiếu" để xem tất cả.';
+    } else if (role === "RECEPTIONIST" && useMine) {
+      emptyMsg = 'Hiện tại không có phiếu nào cần xử lý tại quầy. Bấm "Toàn bộ phiếu" để xem tất cả.';
+    } else if (useMine) {
+      emptyMsg = 'Bạn hiện không có phiếu nào đang xử lý. Bấm "Toàn bộ phiếu" để xem tất cả.';
+    } else {
+      emptyMsg = "Hiện không có phiếu nào cần xử lý trong trung tâm.";
+    }
+    setTableMessage("dash-active-body", 7, emptyMsg);
     return;
   }
 
-  tbody.innerHTML = rows
+  tbody.innerHTML = filtered
     .map((row) => {
       const isTransition = row.action_kind === "transition" && row.primary_action;
       const target = isTransition ? row.primary_action.target : null;
-      const lastCell = isAttention
-        ? `<span class="text-amber-200/90">${escapeHtml(row._reason || "")}</span>`
-        : escapeHtml(row.error_category_name || categoryName(row.error_category_id));
+      const buttonLabel = row.primary_action ? row.primary_action.button_label : (row.action_label || "Xem chi tiết");
+
       return `<tr class="table-row">
-      <td class="table-td font-mono font-semibold text-indigo-300">${escapeHtml(row.ticket_code)}</td>
-      <td class="table-td font-mono text-cyan-300">${escapeHtml(row.serial_number || "–")}<br><span class="text-[11px] text-slate-500">${escapeHtml(displayText(row.product_name) || "")}</span></td>
-      <td class="table-td text-slate-200">${escapeHtml(displayText(row.customer_name) || "–")}<br><span class="text-[11px] text-slate-500 font-mono">${escapeHtml(row.customer_phone || "")}</span></td>
-      <td class="table-td">${statusBadge(row.status)}</td>
-      <td class="table-td text-slate-300 text-xs">${escapeHtml(ticketHandlerName(row))}</td>
-      <td class="table-td text-slate-400">${fmtDateTime(row.created_at)}</td>
-      <td class="table-td text-slate-400 text-xs">${lastCell}</td>
-      <td class="table-td text-right">
-        <div class="flex flex-col items-end gap-1">
-          <button class="btn ${isTransition ? "btn-primary" : "btn-secondary"} btn-sm"
-                  onclick="handleTicketAction(${row.id}, ${target ? `'${target}'` : "null"})">
-            <i data-lucide="${isTransition ? "arrow-right-circle" : "eye"}" class="w-3.5 h-3.5"></i> ${escapeHtml(row.action_label || "Xem phiếu")}
+        <td class="table-td">
+          <button type="button" class="font-semibold text-slate-900 hover:text-indigo-600 transition-colors text-left text-sm"
+                  onclick="openTicketModal(${row.id})" title="Bấm để xem chi tiết phiếu">
+            ${escapeHtml(row.ticket_code)}
           </button>
-          ${rowExtraActionsHtml(row)}
-        </div>
-      </td>
-    </tr>`;
+          <div class="text-xs text-slate-400 mt-0.5">${fmtDateTime(row.created_at)}</div>
+        </td>
+        <td class="table-td">
+          <div class="font-semibold text-slate-900">${escapeHtml(displayText(row.customer_name) || "–")}</div>
+          <div class="text-xs text-slate-500 mt-0.5">${escapeHtml(row.customer_phone || "")}</div>
+        </td>
+        <td class="table-td">
+          <div class="text-slate-800 font-medium text-sm leading-snug">${escapeHtml(displayText(row.product_name) || "–")}</div>
+          <div class="mt-0.5">
+            <button type="button" class="text-xs text-slate-500 hover:text-indigo-600 transition-colors text-left inline-block font-normal"
+                    onclick="openDeviceBySerialOrId(${row.product_instance_id || "null"}, '${escapeHtml(row.serial_number || "")}')" title="Bấm để xem thông tin thiết bị">
+              ${escapeHtml(row.serial_number || "–")}
+            </button>
+          </div>
+        </td>
+        <td class="table-td">${statusBadge(row.status)}</td>
+        <td class="table-td text-sm">
+          <div class="flex items-center gap-1.5">
+            <i data-lucide="user" class="w-3.5 h-3.5 text-slate-400 shrink-0"></i>
+            ${formatTechnicianCell(ticketTechnicianName(row))}
+          </div>
+        </td>
+        <td class="table-td">
+          ${renderNextActionCell(row, attentionMap.get(row.id))}
+        </td>
+        <td class="table-td text-right">
+          <div class="flex flex-col items-end gap-1.5">
+            <button class="btn ${isTransition ? "btn-primary" : "btn-secondary"} btn-sm"
+                    onclick="handleTicketAction(${row.id}, ${target ? `'${target}'` : "null"})">
+              <i data-lucide="${target === "ASSIGN" ? "user-plus" : (isTransition ? "arrow-right-circle" : "eye")}" class="w-4 h-4"></i>
+              <span>${escapeHtml(buttonLabel)}</span>
+            </button>
+            ${rowExtraActionsHtml(row)}
+          </div>
+        </td>
+      </tr>`;
     })
     .join("");
   refreshIcons();
@@ -1405,9 +1920,14 @@ function renderDashTable(wb, view) {
 
 /**
  * Bấm nút hành động của một phiếu (từ bảng điều khiển hoặc danh sách):
- * mở thẳng màn hình phiếu; nếu là bước chuyển trạng thái thì mở luôn hộp thoại xác nhận.
+ * Nếu là phân công KTV -> mở form phân công ngay;
+ * nếu là chuyển bước -> mở modal phiếu kèm hộp thoại xác nhận.
  */
 function handleTicketAction(ticketId, targetStatus) {
+  if (targetStatus === "ASSIGN") {
+    openAssignModal(ticketId);
+    return;
+  }
   openTicketModal(ticketId, targetStatus ? { autoAction: targetStatus } : {});
 }
 
@@ -1459,9 +1979,9 @@ function renderStatusChips(stats) {
 function deviceSampleButtonHtml(d, handlerName) {
   const w = warrantyInfoFor(d.warranty_end_date);
   return `<button type="button" class="btn btn-secondary btn-sm btn-stack text-left" onclick="${handlerName}('${escapeHtml(d.serial_number)}')">
-      <span class="font-semibold text-slate-100">${escapeHtml(displayText(d.product_name) || "Thiết bị")}</span>
-      <span class="text-[10px] text-slate-400">${escapeHtml(displayText(d.customer_name) || "Chưa rõ khách hàng")} &bull; <span class="${w.textClass} font-semibold">${w.dot} ${w.label}</span></span>
-      <span class="text-[10px] text-slate-500 font-mono">Số sê-ri: ${escapeHtml(d.serial_number)}</span>
+      <span class="font-semibold text-slate-900 text-sm">${escapeHtml(displayText(d.product_name) || "Thiết bị")}</span>
+      <span class="text-xs text-slate-600">${escapeHtml(displayText(d.customer_name) || "Chưa rõ khách hàng")} &bull; <span class="${w.textClass} font-semibold">${w.dot} ${w.label}</span></span>
+      <span class="text-xs text-slate-500 font-mono">Số sê-ri: ${escapeHtml(d.serial_number)}</span>
     </button>`;
 }
 
@@ -1476,7 +1996,7 @@ async function refreshLookupSamples() {
   const samples = state.devices.slice(0, 4);
   box.innerHTML = samples.length
     ? samples.map((d) => deviceSampleButtonHtml(d, "useLookupSample")).join("")
-    : '<span class="text-[11px] text-slate-500">Chưa có thiết bị nào trong hệ thống.</span>';
+    : '<span class="text-xs text-slate-500">Chưa có thiết bị nào trong hệ thống.</span>';
   refreshIcons();
 }
 
@@ -1498,7 +2018,7 @@ async function runLookup() {
     showToast("Vui lòng nhập số sê-ri hoặc mã phiếu cần tra cứu.", "warning");
     return;
   }
-  box.innerHTML = '<div class="glass-panel rounded-2xl p-5 border border-slate-800 text-xs text-slate-400">Đang tra cứu...</div>';
+  box.innerHTML = '<div class="glass-panel p-5 text-sm text-slate-500">Đang tra cứu...</div>';
   await ensureCountData();   // có sẵn thiết bị + phiếu để card kết quả hiện đúng lịch sử phiếu
   if (/^TK-/i.test(keyword)) {
     await lookupTicketByCode(keyword.toUpperCase());
@@ -1529,61 +2049,61 @@ async function lookupDeviceBySerial(serial) {
 
 /** Card "Thông tin bảo hành" (dùng chung cho màn Tra cứu). */
 function deviceWarrantyCardHtml(d, w, tickets) {
-  const warrantyBoxClass = w.days !== null && w.days >= 0 ? "bg-emerald-950/40 border-emerald-600/40" : "bg-rose-950/40 border-rose-600/40";
+  const warrantyBoxClass = w.days !== null && w.days >= 0 ? "bg-emerald-50 border-emerald-200" : "bg-rose-50 border-rose-200";
   const warrantyDetail = w.days === null
     ? "Chưa có ngày hết hạn"
     : (w.days >= 0 ? `Hạn đến: ${fmtDate(d.warranty_end_date)} (còn ${w.days} ngày)` : `Đã hết hạn ngày ${fmtDate(d.warranty_end_date)} (quá ${Math.abs(w.days)} ngày)`);
   const serialArg = escapeHtml(d.serial_number);
 
   return `
-    <div class="glass-panel rounded-2xl p-5 border border-slate-800">
+    <div class="glass-panel p-5">
       <div class="flex flex-wrap items-center justify-between gap-2 mb-4">
-        <h3 class="section-title"><i data-lucide="shield-check" class="w-4 h-4 text-emerald-400"></i> Thông tin bảo hành</h3>
+        <h3 class="section-title"><i data-lucide="shield-check" class="w-4 h-4 text-emerald-600"></i> Thông tin bảo hành</h3>
         <button class="btn btn-secondary btn-sm" onclick="openDeviceDetailModal(${d.id})"><i data-lucide="info" class="w-3.5 h-3.5"></i> Xem chi tiết thiết bị</button>
       </div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs mb-4">
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Sản phẩm</div>
-          <div class="font-semibold text-slate-100">${escapeHtml(displayText(d.product_name) || "–")}</div>
-          <div class="text-slate-400 mt-1">Hãng: <span class="text-slate-200">${escapeHtml(displayText(d.product_brand) || "–")}</span></div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">Sản phẩm</div>
+          <div class="font-bold text-slate-900">${escapeHtml(displayText(d.product_name) || "–")}</div>
+          <div class="text-slate-500 mt-1">Hãng: <span class="text-slate-800">${escapeHtml(displayText(d.product_brand) || "–")}</span></div>
         </div>
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Số sê-ri</div>
-          <div class="font-mono font-semibold text-cyan-300">${escapeHtml(d.serial_number)}</div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">Số sê-ri</div>
+          <div class="font-mono font-bold text-indigo-700">${escapeHtml(d.serial_number)}</div>
         </div>
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Khách hàng</div>
-          <div class="font-semibold text-slate-200">${escapeHtml(displayText(d.customer_name) || "–")}</div>
-          <div class="text-slate-400 mt-1 font-mono">${escapeHtml(d.customer_phone || "")}</div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">Khách hàng</div>
+          <div class="font-bold text-slate-900">${escapeHtml(displayText(d.customer_name) || "–")}</div>
+          <div class="text-slate-600 mt-1 font-mono">${escapeHtml(d.customer_phone || "")}</div>
         </div>
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Ngày mua</div>
-          <div class="font-mono text-slate-200">${fmtDate(d.purchase_date)}</div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">Ngày mua</div>
+          <div class="font-mono text-slate-800">${fmtDate(d.purchase_date)}</div>
         </div>
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Hạn bảo hành</div>
-          <div class="font-mono text-slate-200">${fmtDate(d.warranty_end_date)}</div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">Hạn bảo hành</div>
+          <div class="font-mono text-slate-800">${fmtDate(d.warranty_end_date)}</div>
         </div>
         <div class="p-3 rounded-xl border ${warrantyBoxClass}">
-          <div class="text-slate-400 mb-1">Trạng thái bảo hành</div>
+          <div class="text-slate-500 font-semibold mb-1">Trạng thái bảo hành</div>
           <div class="text-base font-bold ${w.textClass}">${w.dot} ${w.label.toUpperCase()}</div>
-          <div class="text-slate-400 mt-1">${warrantyDetail}</div>
+          <div class="text-slate-600 mt-1 font-medium">${warrantyDetail}</div>
         </div>
       </div>
 
       <div class="flex flex-wrap items-center gap-2">
         ${hasPerm("ticket.create") ? `<button class="btn btn-primary" onclick="startTicketForSerial('${serialArg}')"><i data-lucide="file-plus-2" class="w-4 h-4"></i> Tạo phiếu bảo hành cho thiết bị này</button>` : ""}
         <button class="btn btn-secondary" onclick="runLookupCheck('${serialArg}')"><i data-lucide="search-check" class="w-4 h-4"></i> Đối chiếu điều kiện bảo hành</button>
-        <span class="text-[11px] text-slate-500">${tickets.length ? `Thiết bị đã có ${tickets.length} phiếu bảo hành` : "Thiết bị chưa có phiếu bảo hành nào"}</span>
+        <span class="text-xs text-slate-500">${tickets.length ? `Thiết bị đã có ${tickets.length} phiếu bảo hành` : "Thiết bị chưa có phiếu bảo hành nào"}</span>
       </div>
 
       <div id="lookup-check-result" class="mt-3"></div>
       ${tickets.length ? `
-      <div class="mt-3 pt-3 border-t border-slate-800">
-        <div class="text-[11px] text-slate-400 mb-2">Phiếu bảo hành của thiết bị:</div>
+      <div class="mt-3 pt-3 border-t border-slate-200">
+        <div class="text-xs text-slate-600 font-semibold mb-2">Phiếu bảo hành của thiết bị:</div>
         <div class="flex flex-wrap gap-2">
-          ${tickets.map((t) => `<button class="btn btn-secondary btn-sm" onclick="openTicketModal(${t.id})"><span class="font-mono">${escapeHtml(t.ticket_code)}</span> ${statusBadge(t.status)}</button>`).join("")}
+          ${tickets.map((t) => `<button class="btn btn-secondary btn-sm" onclick="openTicketModal(${t.id})"><span class="font-mono font-bold text-indigo-700">${escapeHtml(t.ticket_code)}</span> ${statusBadge(t.status)}</button>`).join("")}
         </div>
       </div>` : ""}
     </div>`;
@@ -1592,9 +2112,9 @@ function deviceWarrantyCardHtml(d, w, tickets) {
 /** Thẻ thông báo khi không tìm thấy dữ liệu tra cứu. */
 function lookupNotFoundCard(keyword, hint) {
   return `
-    <div class="glass-panel rounded-2xl p-5 border border-amber-900/60">
-      <div class="text-sm font-semibold text-amber-200 mb-1">Không tìm thấy "${escapeHtml(keyword)}" trong hệ thống</div>
-      <p class="text-xs text-slate-400">${hint}</p>
+    <div class="glass-panel p-5 border border-amber-300 bg-amber-50/50">
+      <div class="text-sm font-bold text-amber-900 mb-1">Không tìm thấy "${escapeHtml(keyword)}" trong hệ thống</div>
+      <p class="text-xs text-slate-600">${hint}</p>
     </div>`;
 }
 
@@ -1613,48 +2133,48 @@ async function lookupTicketByCode(code) {
   }
   const t = res.data;
   const w = warrantyInfoFor(t.warranty_end_date);
-  const handler = ticketHandlerName(t);
+  const handler = ticketTechnicianName(t);
   box.innerHTML = `
-    <div class="glass-panel rounded-2xl p-5 border border-slate-800">
+    <div class="glass-panel p-5">
       <div class="flex flex-wrap items-center justify-between gap-2 mb-3">
-        <h3 class="section-title"><i data-lucide="file-text" class="w-4 h-4 text-indigo-400"></i> Phiếu bảo hành <span class="font-mono ml-1">${escapeHtml(t.ticket_code)}</span></h3>
+        <h3 class="section-title"><i data-lucide="file-text" class="w-4 h-4 text-indigo-600"></i> Phiếu bảo hành <span class="font-mono ml-1 text-indigo-700">${escapeHtml(t.ticket_code)}</span></h3>
         <button class="btn btn-primary btn-sm" onclick="openTicketModal(${t.id})"><i data-lucide="arrow-up-right" class="w-3.5 h-3.5"></i> Mở phiếu để xử lý</button>
       </div>
 
       ${ticketProgressHtml(t.status)}
 
       <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 text-xs mt-4">
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Khách hàng</div>
-          <div class="font-semibold text-slate-200">${escapeHtml(displayText(t.customer_name) || "–")}</div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">Khách hàng</div>
+          <div class="font-bold text-slate-900">${escapeHtml(displayText(t.customer_name) || "–")}</div>
         </div>
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Thiết bị (số sê-ri)</div>
-          <div class="font-mono font-semibold text-cyan-300">${escapeHtml(t.serial_number || "–")}</div>
-          <div class="text-slate-400 mt-1">${escapeHtml(displayText(t.product_name) || "")}</div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">Thiết bị (số sê-ri)</div>
+          <div class="font-mono font-bold text-indigo-700">${escapeHtml(t.serial_number || "–")}</div>
+          <div class="text-slate-600 mt-1 font-medium">${escapeHtml(displayText(t.product_name) || "")}</div>
         </div>
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Tình trạng bảo hành của thiết bị</div>
-          <div class="${w.textClass} font-semibold">${w.dot} ${w.label}</div>
-          <div class="text-slate-400 mt-1">Hạn: <span class="font-mono">${fmtDate(t.warranty_end_date)}</span></div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">Tình trạng bảo hành của thiết bị</div>
+          <div class="${w.textClass} font-bold">${w.dot} ${w.label}</div>
+          <div class="text-slate-600 mt-1">Hạn: <span class="font-mono font-medium">${fmtDate(t.warranty_end_date)}</span></div>
         </div>
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Ngày tiếp nhận</div>
-          <div class="font-mono text-slate-200">${fmtDateTime(t.created_at)}</div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">Ngày tiếp nhận</div>
+          <div class="font-mono text-slate-800 font-medium">${fmtDateTime(t.created_at)}</div>
         </div>
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Nhân viên phụ trách</div>
-          <div class="text-slate-200">${escapeHtml(handler)}</div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">KTV phụ trách</div>
+          <div class="text-slate-900 font-medium">${formatTechnicianCell(handler)}</div>
         </div>
-        <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-          <div class="text-slate-400 mb-1">Loại lỗi</div>
-          <div class="text-slate-200">${escapeHtml(categoryName(t.error_category_id))}</div>
+        <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+          <div class="text-slate-500 font-semibold mb-1">Loại lỗi</div>
+          <div class="text-slate-900 font-medium">${escapeHtml(categoryName(t.error_category_id))}</div>
         </div>
       </div>
 
       <div class="mt-3">
-        <div class="text-xs font-semibold text-slate-300 mb-1">Nội dung sự cố khách báo</div>
-        <div class="text-sm text-slate-200 p-3 bg-slate-900/70 rounded-xl border border-slate-800">${escapeHtml(humanizeText(t.issue_description) || "–")}</div>
+        <div class="text-xs font-bold text-slate-700 mb-1">Nội dung sự cố khách báo</div>
+        <div class="text-sm text-slate-800 p-3 bg-slate-50 rounded-xl border border-slate-200 leading-relaxed">${escapeHtml(humanizeText(t.issue_description) || "–")}</div>
       </div>
     </div>`;
 }
@@ -1663,27 +2183,27 @@ async function lookupTicketByCode(code) {
 async function runLookupCheck(serial) {
   const box = $("lookup-check-result");
   if (!box) return;
-  box.innerHTML = '<span class="text-xs text-slate-400">Đang đối chiếu...</span>';
+  box.innerHTML = '<span class="text-xs text-slate-500">Đang đối chiếu...</span>';
   const res = await apiFetch("/api/v1/debug/check-warranty", {
     method: "POST",
     body: { serial_number: serial, check_date: todayISO() },
   });
   if (!res.ok) {
-    box.innerHTML = `<span class="text-xs text-rose-300">${escapeHtml(errorMessage(res.status, res.data))}</span>`;
+    box.innerHTML = `<span class="text-xs text-rose-700">${escapeHtml(errorMessage(res.status, res.data))}</span>`;
     return;
   }
   const data = res.data;
   const valid = data.is_valid === true;
   const traces = Array.isArray(data.debug_traces) ? data.debug_traces : [];
   box.innerHTML = `
-    <div class="p-3 rounded-xl border text-xs ${valid ? "bg-emerald-950/30 border-emerald-600/40 text-emerald-200" : "bg-rose-950/30 border-rose-600/40 text-rose-200"}">
+    <div class="p-3 rounded-xl border text-xs ${valid ? "bg-emerald-50 border-emerald-200 text-emerald-900" : "bg-rose-50 border-rose-200 text-rose-900"}">
       <div class="font-bold">${valid ? "Đủ điều kiện bảo hành" : "Không đủ điều kiện bảo hành"}</div>
-      <div class="mt-1 text-[11px]">Đối chiếu ngày ${fmtDate(data.check_date)}: ${escapeHtml(humanizeText(data.status_message))}</div>
+      <div class="mt-1 text-xs">Đối chiếu ngày ${fmtDate(data.check_date)}: ${escapeHtml(humanizeText(data.status_message))}</div>
     </div>
     ${traces.length ? `
-    <details class="mt-2 rounded-xl border border-slate-800 bg-black/60">
-      <summary class="px-3 py-2 text-[11px] font-semibold text-slate-400">Thông tin đối chiếu chi tiết (chỉ cần khi trao đổi với bộ phận kỹ thuật)</summary>
-      <div class="px-3 pb-3 font-mono text-[11px] text-slate-400 space-y-0.5">
+    <details class="mt-2 rounded-xl border border-slate-200 bg-slate-50">
+      <summary class="px-3 py-2 text-xs font-semibold text-slate-600 cursor-pointer">Thông tin đối chiếu chi tiết (chỉ cần khi trao đổi với bộ phận kỹ thuật)</summary>
+      <div class="px-3 pb-3 font-mono text-xs text-slate-600 space-y-0.5">
         ${traces.map((s) => `<div>${escapeHtml(humanizeTraceStep(s))}</div>`).join("")}
       </div>
     </details>` : ""}`;
@@ -1707,7 +2227,7 @@ async function loadCustomers() {
   setTableLoading("customers-table-body", 7);
   const res = await apiFetch("/api/v1/customers/");
   if (!res.ok) {
-    setTableMessage("customers-table-body", 6, "Không tải được danh sách khách hàng.");
+    setTableMessage("customers-table-body", 7, "Không tải được danh sách khách hàng.");
     toastError(res, "Không tải được danh sách khách hàng.");
     return;
   }
@@ -1728,12 +2248,12 @@ function renderCustomers(items) {
     const ticketCount = countTicketsOfCustomer(c.id);
     return `
     <tr class="table-row">
-      <td class="table-td font-semibold text-slate-100">${escapeHtml(displayText(c.full_name))}</td>
-      <td class="table-td font-mono text-indigo-300">${escapeHtml(c.phone)}</td>
-      <td class="table-td text-slate-400">${escapeHtml(c.email || "–")}</td>
-      <td class="table-td text-slate-400">${escapeHtml(c.address || "–")}</td>
-      <td class="table-td text-center font-mono text-cyan-300">${deviceCount}</td>
-      <td class="table-td text-center font-mono text-fuchsia-300">${ticketCount}</td>
+      <td class="table-td font-bold text-slate-900">${escapeHtml(displayText(c.full_name))}</td>
+      <td class="table-td font-mono font-bold text-indigo-700">${escapeHtml(c.phone)}</td>
+      <td class="table-td text-slate-600">${escapeHtml(c.email || "–")}</td>
+      <td class="table-td text-slate-600">${escapeHtml(c.address || "–")}</td>
+      <td class="table-td text-center font-mono font-bold text-slate-800">${deviceCount}</td>
+      <td class="table-td text-center font-mono font-bold text-indigo-700">${ticketCount}</td>
       <td class="table-td text-right whitespace-nowrap">
         <button class="btn btn-secondary btn-sm" onclick="openCustomerDetailModal(${c.id})"><i data-lucide="info" class="w-3.5 h-3.5"></i> Chi tiết</button>
         ${hasPerm("customer.update") ? `<button class="btn btn-secondary btn-sm ml-1" onclick="openCustomerModal(${c.id})"><i data-lucide="pencil" class="w-3.5 h-3.5"></i> Sửa</button>` : ""}
@@ -1802,17 +2322,17 @@ async function openCustomerDetailModal(customerId) {
 
   $("customer-detail-title").textContent = `Chi tiết khách hàng: ${displayText(c.full_name)}`;
   const infoCell = (label, value, mono = false) => `
-    <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-      <div class="text-slate-400 mb-1">${label}</div>
-      <div class="font-semibold text-slate-100${mono ? " font-mono" : ""}">${value}</div>
+    <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+      <div class="text-xs text-slate-500 font-semibold mb-1">${label}</div>
+      <div class="font-bold text-slate-900${mono ? " font-mono text-indigo-700" : ""}">${value}</div>
     </div>`;
 
   const deviceRows = devices.length
     ? devices.map((d) => `
       <tr class="table-row">
-        <td class="table-td font-mono text-cyan-300">${escapeHtml(d.serial_number)}</td>
-        <td class="table-td text-slate-200">${escapeHtml(displayText(d.product_name) || "–")}</td>
-        <td class="table-td text-slate-400 font-mono">${fmtDate(d.warranty_end_date)}</td>
+        <td class="table-td font-mono font-bold text-indigo-700">${escapeHtml(d.serial_number)}</td>
+        <td class="table-td text-slate-900 font-medium">${escapeHtml(displayText(d.product_name) || "–")}</td>
+        <td class="table-td text-slate-600 font-mono text-xs">${fmtDate(d.warranty_end_date)}</td>
         <td class="table-td">${warrantyStatusHtml(d.warranty_end_date)}</td>
         <td class="table-td text-right whitespace-nowrap">
           <button class="btn btn-secondary btn-sm" onclick="closeModal('customer-detail-modal'); openDeviceDetailModal(${d.id})"><i data-lucide="info" class="w-3.5 h-3.5"></i> Chi tiết thiết bị</button>
@@ -1823,10 +2343,10 @@ async function openCustomerDetailModal(customerId) {
   const ticketRows = tickets.length
     ? tickets.map((t) => `
       <tr class="table-row">
-        <td class="table-td font-mono text-indigo-300">${escapeHtml(t.ticket_code)}</td>
+        <td class="table-td font-mono font-bold text-indigo-700">${escapeHtml(t.ticket_code)}</td>
         <td class="table-td">${statusBadge(t.status)}</td>
-        <td class="table-td text-slate-400">${escapeHtml(displayText(t.product_name) || "–")}</td>
-        <td class="table-td text-slate-400 font-mono">${fmtDate(t.received_date)}</td>
+        <td class="table-td text-slate-900 font-medium">${escapeHtml(displayText(t.product_name) || "–")}</td>
+        <td class="table-td text-slate-600 font-mono text-xs">${fmtDate(t.received_date)}</td>
         <td class="table-td text-right whitespace-nowrap">
           <button class="btn btn-secondary btn-sm" onclick="closeModal('customer-detail-modal'); openTicketModal(${t.id})"><i data-lucide="file-text" class="w-3.5 h-3.5"></i> Xem phiếu</button>
         </td>
@@ -1840,14 +2360,14 @@ async function openCustomerDetailModal(customerId) {
       ${infoCell("Số thiết bị", String(devices.length), true)}
       ${infoCell("Số phiếu bảo hành", String(tickets.length), true)}
     </div>
-    <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-      <div class="text-slate-400 mb-1">Địa chỉ</div>
-      <div class="text-slate-200">${escapeHtml(c.address || "–")}</div>
+    <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+      <div class="text-xs text-slate-500 font-semibold mb-1">Địa chỉ</div>
+      <div class="font-medium text-slate-800">${escapeHtml(c.address || "–")}</div>
     </div>
 
     <div>
-      <div class="text-xs font-semibold text-slate-200 mb-2 flex items-center gap-1.5"><i data-lucide="hard-drive" class="w-3.5 h-3.5 text-cyan-400"></i> Thiết bị của khách (${devices.length})</div>
-      <div class="overflow-x-auto rounded-xl border border-slate-800">
+      <div class="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5"><i data-lucide="hard-drive" class="w-3.5 h-3.5 text-indigo-600"></i> Thiết bị của khách (${devices.length})</div>
+      <div class="overflow-x-auto rounded-xl border border-slate-200">
         <table class="w-full min-w-[620px]">
           <thead><tr>
             <th class="table-th">Số sê-ri</th><th class="table-th">Sản phẩm</th><th class="table-th">Hạn bảo hành</th><th class="table-th">Tình trạng</th><th class="table-th text-right">Thao tác</th>
@@ -1858,8 +2378,8 @@ async function openCustomerDetailModal(customerId) {
     </div>
 
     <div>
-      <div class="text-xs font-semibold text-slate-200 mb-2 flex items-center gap-1.5"><i data-lucide="file-text" class="w-3.5 h-3.5 text-indigo-400"></i> Phiếu bảo hành của khách (${tickets.length})</div>
-      <div class="overflow-x-auto rounded-xl border border-slate-800">
+      <div class="text-xs font-bold text-slate-700 mb-2 flex items-center gap-1.5"><i data-lucide="file-text" class="w-3.5 h-3.5 text-indigo-600"></i> Phiếu bảo hành của khách (${tickets.length})</div>
+      <div class="overflow-x-auto rounded-xl border border-slate-200">
         <table class="w-full min-w-[620px]">
           <thead><tr>
             <th class="table-th">Mã phiếu</th><th class="table-th">Trạng thái</th><th class="table-th">Sản phẩm</th><th class="table-th">Ngày tiếp nhận</th><th class="table-th text-right">Thao tác</th>
@@ -1899,6 +2419,7 @@ function openCustomerModal(customerId = null) {
 
 async function submitCustomerForm(event) {
   event.preventDefault();
+  const submitBtn = event.target ? event.target.querySelector("button[type=submit]") : null;
   const id = $("cust-id").value;
   const payload = {
     full_name: ($("cust-name").value || "").trim(),
@@ -1915,20 +2436,25 @@ async function submitCustomerForm(event) {
     return;
   }
 
-  const res = id
-    ? await apiFetch(`/api/v1/customers/${id}`, { method: "PUT", body: payload })
-    : await apiFetch("/api/v1/customers/", { method: "POST", body: payload });
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const res = id
+      ? await apiFetch(`/api/v1/customers/${id}`, { method: "PUT", body: payload })
+      : await apiFetch("/api/v1/customers/", { method: "POST", body: payload });
 
-  if (!res.ok) {
-    toastError(res, id ? "Không cập nhật được khách hàng." : "Không thêm được khách hàng.");
-    return;
+    if (!res.ok) {
+      toastError(res, id ? "Không cập nhật được khách hàng." : "Không thêm được khách hàng.");
+      return;
+    }
+    closeModal("customer-modal");
+    const shownName = displayText(payload.full_name);
+    showToast(id ? `Đã cập nhật khách hàng "${escapeHtml(shownName)}".` : `Đã thêm khách hàng "${escapeHtml(shownName)}".`, "success");
+    await loadCustomers();
+    await loadReferenceData();
+    await loadDashboard();
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
-  closeModal("customer-modal");
-  const shownName = displayText(payload.full_name);
-  showToast(id ? `Đã cập nhật khách hàng "${escapeHtml(shownName)}".` : `Đã thêm khách hàng "${escapeHtml(shownName)}".`, "success");
-  await loadCustomers();
-  await loadReferenceData();
-  await loadDashboard();
 }
 
 function deleteCustomer(customerId) {
@@ -1982,14 +2508,14 @@ function renderProducts(items) {
   }
   tbody.innerHTML = items.map((p) => `
     <tr class="table-row">
-      <td class="table-td font-semibold text-slate-100">${escapeHtml(displayText(p.name))}</td>
-      <td class="table-td text-slate-300">${escapeHtml(displayText(p.brand) || "–")}</td>
-      <td class="table-td text-slate-300">${escapeHtml(p.category || "–")}</td>
-      <td class="table-td text-emerald-300">${p.warranty_duration_months} tháng</td>
-      <td class="table-td text-center font-mono text-cyan-300">${countDevicesOfProduct(p.id)}</td>
+      <td class="table-td font-bold text-slate-900">${escapeHtml(displayText(p.name))}</td>
+      <td class="table-td text-slate-700 font-medium">${escapeHtml(displayText(p.brand) || "–")}</td>
+      <td class="table-td text-slate-700">${escapeHtml(p.category || "–")}</td>
+      <td class="table-td text-emerald-700 font-semibold">${p.warranty_duration_months} tháng</td>
+      <td class="table-td text-center font-mono font-bold text-slate-800">${countDevicesOfProduct(p.id)}</td>
       <td class="table-td text-right whitespace-nowrap">
         ${hasPerm("product.manage") ? `<button class="btn btn-secondary btn-sm" onclick="openProductModal(${p.id})"><i data-lucide="pencil" class="w-3.5 h-3.5"></i> Sửa</button>
-        <button class="btn btn-danger btn-sm ml-1" onclick="deleteProduct(${p.id})"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Xóa</button>` : `<span class="text-[11px] text-slate-500">Chỉ xem danh mục</span>`}
+        <button class="btn btn-danger btn-sm ml-1" onclick="deleteProduct(${p.id})"><i data-lucide="trash-2" class="w-3.5 h-3.5"></i> Xóa</button>` : `<span class="text-xs text-slate-500">Chỉ xem danh mục</span>`}
       </td>
     </tr>`).join("");
   refreshIcons();
@@ -2051,6 +2577,7 @@ function openProductModal(productId = null) {
 
 async function submitProductForm(event) {
   event.preventDefault();
+  const submitBtn = event.target ? event.target.querySelector("button[type=submit]") : null;
   const id = $("prod-id").value;
   const months = parseInt($("prod-months").value, 10);
   const payload = {
@@ -2070,19 +2597,24 @@ async function submitProductForm(event) {
     return;
   }
 
-  const res = id
-    ? await apiFetch(`/api/v1/products/${id}`, { method: "PUT", body: payload })
-    : await apiFetch("/api/v1/products/", { method: "POST", body: payload });
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const res = id
+      ? await apiFetch(`/api/v1/products/${id}`, { method: "PUT", body: payload })
+      : await apiFetch("/api/v1/products/", { method: "POST", body: payload });
 
-  if (!res.ok) {
-    toastError(res, id ? "Không cập nhật được dòng máy." : "Không thêm được dòng máy.");
-    return;
+    if (!res.ok) {
+      toastError(res, id ? "Không cập nhật được dòng máy." : "Không thêm được dòng máy.");
+      return;
+    }
+    closeModal("product-modal");
+    const shownProduct = displayText(payload.name);
+    showToast(id ? `Đã cập nhật dòng máy "${escapeHtml(shownProduct)}".` : `Đã thêm dòng máy "${escapeHtml(shownProduct)}".`, "success");
+    await loadProducts();
+    await loadDashboard();
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
-  closeModal("product-modal");
-  const shownProduct = displayText(payload.name);
-  showToast(id ? `Đã cập nhật dòng máy "${escapeHtml(shownProduct)}".` : `Đã thêm dòng máy "${escapeHtml(shownProduct)}".`, "success");
-  await loadProducts();
-  await loadDashboard();
 }
 
 function deleteProduct(productId) {
@@ -2138,14 +2670,14 @@ function renderDevices(items) {
     const w = warrantyInfoFor(d.warranty_end_date);
     const expired = w.days !== null && w.days < 0;
     const isActive = d.status === "ACTIVE";
-    const recordChip = `<span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${isActive ? "bg-emerald-500/15 text-emerald-300 border border-emerald-500/40" : "bg-rose-500/15 text-rose-300 border border-rose-500/40"}">${escapeHtml(deviceStatusLabel(d.status))}</span>`;
+    const recordChip = `<span class="px-2 py-0.5 rounded-full text-xs font-bold ${isActive ? "bg-emerald-50 text-emerald-800 border border-emerald-200" : "bg-rose-50 text-rose-800 border border-rose-200"}">${escapeHtml(deviceStatusLabel(d.status))}</span>`;
     return `
     <tr class="table-row">
-      <td class="table-td font-mono text-cyan-300">${escapeHtml(d.serial_number)}</td>
-      <td class="table-td text-slate-100">${escapeHtml(displayText(d.product_name) || "–")}<br><span class="text-[11px] text-slate-500">${escapeHtml(displayText(d.product_brand) || "")}</span></td>
-      <td class="table-td text-slate-300">${escapeHtml(displayText(d.customer_name) || "–")}<br><span class="text-[11px] text-slate-500 font-mono">${escapeHtml(d.customer_phone || "")}</span></td>
-      <td class="table-td text-slate-400">${fmtDate(d.purchase_date)}</td>
-      <td class="table-td font-mono ${expired ? "text-rose-300" : "text-emerald-300"}">${fmtDate(d.warranty_end_date)}</td>
+      <td class="table-td font-mono font-bold text-indigo-700">${escapeHtml(d.serial_number)}</td>
+      <td class="table-td text-slate-900 font-bold">${escapeHtml(displayText(d.product_name) || "–")}<br><span class="text-xs text-slate-500 font-normal">${escapeHtml(displayText(d.product_brand) || "")}</span></td>
+      <td class="table-td text-slate-800 font-medium">${escapeHtml(displayText(d.customer_name) || "–")}<br><span class="text-xs text-slate-500 font-mono font-normal">${escapeHtml(d.customer_phone || "")}</span></td>
+      <td class="table-td text-slate-600 font-mono text-xs">${fmtDate(d.purchase_date)}</td>
+      <td class="table-td font-mono ${expired ? "text-rose-700 font-semibold" : "text-emerald-700 font-semibold"}">${fmtDate(d.warranty_end_date)}</td>
       <td class="table-td">${warrantyStatusHtml(d.warranty_end_date)}</td>
       <td class="table-td">${recordChip}</td>
       <td class="table-td text-right whitespace-nowrap">
@@ -2180,26 +2712,26 @@ async function openDeviceDetailModal(deviceId) {
 
   $("dev-detail-serial").textContent = d.serial_number;
   $("dev-detail-status").innerHTML = `<span class="text-sm font-bold ${w.textClass}">${w.dot} ${w.label.toUpperCase()}</span>
-    <span class="text-xs text-slate-400 ml-2">${warrantyDetail}</span>`;
+    <span class="text-xs text-slate-500 ml-2 font-medium">${warrantyDetail}</span>`;
 
   $("dev-detail-info").innerHTML = `
-    <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-      <div class="text-slate-400 mb-1">Dòng máy</div>
-      <div class="font-semibold text-slate-100">${escapeHtml(displayText(d.product_name) || "–")}</div>
-      <div class="text-slate-400 mt-1">Hãng: <span class="text-slate-200">${escapeHtml(displayText(d.product_brand) || "–")}</span></div>
+    <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+      <div class="text-xs text-slate-500 font-semibold mb-1">Dòng máy</div>
+      <div class="font-bold text-slate-900">${escapeHtml(displayText(d.product_name) || "–")}</div>
+      <div class="text-slate-500 mt-1">Hãng: <span class="text-slate-800 font-medium">${escapeHtml(displayText(d.product_brand) || "–")}</span></div>
     </div>
-    <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-      <div class="text-slate-400 mb-1">Chủ sở hữu</div>
-      <div class="font-semibold text-slate-200">${escapeHtml(displayText(d.customer_name) || "–")}</div>
-      <div class="text-slate-400 mt-1 font-mono">${escapeHtml(d.customer_phone || "")}</div>
+    <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+      <div class="text-xs text-slate-500 font-semibold mb-1">Chủ sở hữu</div>
+      <div class="font-bold text-slate-900">${escapeHtml(displayText(d.customer_name) || "–")}</div>
+      <div class="text-slate-600 mt-1 font-mono">${escapeHtml(d.customer_phone || "")}</div>
     </div>
-    <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-      <div class="text-slate-400 mb-1">Ngày mua</div>
-      <div class="font-mono text-slate-200">${fmtDate(d.purchase_date)}</div>
+    <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+      <div class="text-xs text-slate-500 font-semibold mb-1">Ngày mua</div>
+      <div class="font-mono text-slate-800">${fmtDate(d.purchase_date)}</div>
     </div>
-    <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-      <div class="text-slate-400 mb-1">Tình trạng theo dõi</div>
-      <div class="text-slate-200">${escapeHtml(deviceStatusLabel(d.status))}</div>
+    <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+      <div class="text-xs text-slate-500 font-semibold mb-1">Tình trạng theo dõi</div>
+      <div class="text-slate-800 font-medium">${escapeHtml(deviceStatusLabel(d.status))}</div>
     </div>`;
 
   const checkBox = $("dev-detail-check");
@@ -2208,11 +2740,11 @@ async function openDeviceDetailModal(deviceId) {
 
   $("dev-detail-tickets").innerHTML = tickets.length
     ? tickets.map((t) => `
-      <div class="flex flex-wrap items-center justify-between gap-2 p-2.5 bg-slate-900/70 rounded-xl border border-slate-800 text-xs">
+      <div class="flex flex-wrap items-center justify-between gap-2 p-3 bg-slate-50 rounded-xl border border-slate-200 text-xs">
         <div class="flex items-center gap-2">
-          <span class="font-mono text-indigo-300">${escapeHtml(t.ticket_code)}</span>
+          <span class="font-mono font-bold text-indigo-700">${escapeHtml(t.ticket_code)}</span>
           ${statusBadge(t.status)}
-          <span class="text-slate-400">${fmtDateTime(t.created_at)}</span>
+          <span class="text-slate-600 font-mono">${fmtDateTime(t.created_at)}</span>
         </div>
         <button class="btn btn-secondary btn-sm" onclick="closeModal('device-detail-modal'); openTicketModal(${t.id})"><i data-lucide="arrow-up-right" class="w-3.5 h-3.5"></i> Mở phiếu</button>
       </div>`).join("")
@@ -2239,50 +2771,51 @@ async function runDeviceWarrantyCheck() {
   if (!d) return;
   const box = $("dev-detail-check");
   box.className = "mb-4";
-  box.innerHTML = '<span class="text-xs text-slate-400">Đang đối chiếu điều kiện bảo hành...</span>';
+  box.innerHTML = '<span class="text-xs text-slate-500">Đang đối chiếu điều kiện bảo hành...</span>';
   const res = await apiFetch("/api/v1/debug/check-warranty", {
     method: "POST",
     body: { serial_number: d.serial_number, check_date: todayISO() },
   });
   if (!res.ok) {
-    box.innerHTML = `<span class="text-xs text-rose-300">${escapeHtml(errorMessage(res.status, res.data))}</span>`;
+    box.innerHTML = `<span class="text-xs text-rose-700">${escapeHtml(errorMessage(res.status, res.data))}</span>`;
     return;
   }
   const data = res.data;
   const valid = data.is_valid === true;
   const traces = Array.isArray(data.debug_traces) ? data.debug_traces : [];
   box.innerHTML = `
-    <div class="p-3 rounded-xl border text-xs ${valid ? "bg-emerald-950/30 border-emerald-600/40 text-emerald-200" : "bg-rose-950/30 border-rose-600/40 text-rose-200"}">
+    <div class="p-3 rounded-xl border text-xs ${valid ? "bg-emerald-50 border-emerald-200 text-emerald-900" : "bg-rose-50 border-rose-200 text-rose-900"}">
       <div class="font-bold">${valid ? "Đủ điều kiện bảo hành" : "Không đủ điều kiện bảo hành"}</div>
-      <div class="mt-1 text-[11px]">Đối chiếu ngày ${fmtDate(data.check_date)}: ${escapeHtml(humanizeText(data.status_message))}</div>
+      <div class="mt-1 text-xs">Đối chiếu ngày ${fmtDate(data.check_date)}: ${escapeHtml(humanizeText(data.status_message))}</div>
     </div>
     ${traces.length ? `
-    <details class="mt-2 rounded-xl border border-slate-800 bg-black/60">
-      <summary class="px-3 py-2 text-[11px] font-semibold text-slate-400">Thông tin đối chiếu chi tiết (chỉ cần khi trao đổi với bộ phận kỹ thuật)</summary>
-      <div class="px-3 pb-3 font-mono text-[11px] text-slate-400 space-y-0.5">
+    <details class="mt-2 rounded-xl border border-slate-200 bg-slate-50">
+      <summary class="px-3 py-2 text-xs font-semibold text-slate-600 cursor-pointer">Thông tin đối chiếu chi tiết (chỉ cần khi trao đổi với bộ phận kỹ thuật)</summary>
+      <div class="px-3 pb-3 font-mono text-xs text-slate-600 space-y-0.5">
         ${traces.map((s) => `<div>${escapeHtml(humanizeTraceStep(s))}</div>`).join("")}
       </div>
     </details>` : ""}`;
   refreshIcons();
 }
 
-/** Tiến trình xử lý phiếu (4 bước) - dùng ở modal phiếu và màn Tra cứu. */
+/** Tiến trình xử lý phiếu (5 bước) - dùng ở modal phiếu và màn Tra cứu. */
 function ticketProgressHtml(status) {
   const steps = [
     { code: "RECEIVED", label: "Tiếp nhận" },
     { code: "INSPECTING", label: "Kiểm tra" },
     { code: "REPAIRING", label: "Sửa chữa" },
-    { code: "WAITING_RETURN", label: "Chờ trả máy" },
     { code: "COMPLETED", label: "Hoàn tất" },
+    { code: "RETURNED", label: "Đã trả máy" },
   ];
   if (status === "REJECTED") {
-    const idx = 1;
     return `<div class="flex flex-wrap items-center gap-1.5">
-      ${steps.map((s, i) => `
-        <span class="px-2.5 py-1 rounded-lg border ${i <= idx ? "bg-slate-800 border-slate-600 text-slate-200" : "border-slate-800 text-slate-500"}">
-          ${i + 1}. ${s.label}
-        </span>`).join('<i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-600"></i>')}
-      <span class="px-2.5 py-1 rounded-lg border bg-rose-950/50 border-rose-600/50 text-rose-200 font-semibold">Từ chối bảo hành</span>
+      <span class="px-2.5 py-1 rounded-lg border bg-emerald-50 border-emerald-300 text-emerald-800 font-medium">1. Tiếp nhận</span>
+      <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-400"></i>
+      <span class="px-2.5 py-1 rounded-lg border bg-emerald-50 border-emerald-300 text-emerald-800 font-medium">2. Kiểm tra</span>
+      <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-400"></i>
+      <span class="px-2.5 py-1 rounded-lg border bg-rose-50 border-rose-300 text-rose-800 font-bold">Từ chối (chờ trả)</span>
+      <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-400"></i>
+      <span class="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-400 bg-white">Đã trả máy</span>
     </div>`;
   }
   const currentIdx = Math.max(0, steps.findIndex((s) => s.code === status));
@@ -2291,10 +2824,10 @@ function ticketProgressHtml(status) {
       const done = i < currentIdx;
       const current = i === currentIdx;
       const cls = current
-        ? "bg-indigo-600/30 border-indigo-400 text-indigo-100 font-semibold"
-        : (done ? "bg-emerald-950/40 border-emerald-700/60 text-emerald-200" : "border-slate-800 text-slate-500");
+        ? "bg-indigo-50 border-indigo-300 text-indigo-700 font-bold"
+        : (done ? "bg-emerald-50 border-emerald-300 text-emerald-800 font-medium" : "border-slate-200 text-slate-400 bg-white");
       return `<span class="px-2.5 py-1 rounded-lg border ${cls}">${i + 1}. ${s.label}${current ? " (hiện tại)" : ""}</span>`;
-    }).join('<i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-600"></i>')}
+    }).join('<i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-400"></i>')}
   </div>`;
 }
 
@@ -2367,6 +2900,7 @@ async function openDeviceModal(deviceId = null) {
 
 async function submitDeviceForm(event) {
   event.preventDefault();
+  const submitBtn = event.target ? event.target.querySelector("button[type=submit]") : null;
   const id = $("dev-id").value;
   const serial = ($("dev-serial").value || "").trim();
   const customerId = parseInt($("dev-customer-id").value, 10);
@@ -2411,19 +2945,24 @@ async function submitDeviceForm(event) {
     if (category) payload.category = category;
   }
 
-  const res = id
-    ? await apiFetch(`/api/v1/product-instances/${id}`, { method: "PUT", body: payload })
-    : await apiFetch("/api/v1/product-instances/", { method: "POST", body: payload });
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const res = id
+      ? await apiFetch(`/api/v1/product-instances/${id}`, { method: "PUT", body: payload })
+      : await apiFetch("/api/v1/product-instances/", { method: "POST", body: payload });
 
-  if (!res.ok) {
-    toastError(res, id ? "Không cập nhật được thiết bị." : "Không thêm được thiết bị.");
-    return;
+    if (!res.ok) {
+      toastError(res, id ? "Không cập nhật được thiết bị." : "Không thêm được thiết bị.");
+      return;
+    }
+    closeModal("device-modal");
+    showToast(id ? `Đã cập nhật thiết bị "${serial}".` : `Đã thêm thiết bị "${serial}".`, "success");
+    await loadDevices();
+    await loadReferenceData();
+    await loadDashboard();
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
-  closeModal("device-modal");
-  showToast(id ? `Đã cập nhật thiết bị "${serial}".` : `Đã thêm thiết bị "${serial}".`, "success");
-  await loadDevices();
-  await loadProducts();
-  await loadDashboard();
 }
 
 function deleteDevice(deviceId) {
@@ -2505,7 +3044,7 @@ async function refreshWizardSamples() {
   }
   box.innerHTML = state.devices.length
     ? state.devices.slice(0, 4).map((d) => deviceSampleButtonHtml(d, "wizardUseSample")).join("")
-    : '<span class="text-[11px] text-slate-500">Chưa có thiết bị nào trong hệ thống.</span>';
+    : '<span class="text-xs text-slate-500">Chưa có thiết bị nào trong hệ thống.</span>';
   refreshIcons();
 }
 
@@ -2644,18 +3183,20 @@ async function wizardLookupSerial() {
   const res = await apiFetch(`/api/v1/product-instances/by-serial/${encodeURIComponent(serial)}`);
   if (res.status === 404) {
     box.innerHTML = `
-      <div class="p-3 rounded-xl border border-amber-800/70 bg-amber-950/20 text-xs">
-        <div class="font-semibold text-amber-200">Số sê-ri <span class="font-mono">${escapeHtml(serial)}</span> chưa có trong hệ thống</div>
-        <p class="text-slate-400 mt-1">Điền thông tin bên dưới để đăng ký thiết bị mới, sau đó tiếp tục tạo phiếu bảo hành.</p>
+      <div class="p-3.5 rounded-xl border border-amber-200 bg-amber-50 text-xs text-amber-900">
+        <div class="font-bold text-amber-900 flex items-center gap-1.5">
+          <i data-lucide="info" class="w-4 h-4 text-amber-600"></i> Số sê-ri <span class="font-mono font-bold">${escapeHtml(serial)}</span> chưa có trong hệ thống
+        </div>
+        <p class="text-amber-800 mt-1">Vui lòng điền thông tin bên dưới để đăng ký thiết bị mới, sau đó tiếp tục tạo phiếu bảo hành.</p>
       </div>`;
-    if ($("wiz-purchase-date") && !$("wiz-purchase-date").value) $("wiz-purchase-date").value = todayISO();
+    if ($("wiz-purchase-date")) $("wiz-purchase-date").value = "";
     recalcWizardEndDate();
     wizardToggleNewDevice(true);
     refreshIcons();
     return;
   }
   if (!res.ok) {
-    box.innerHTML = `<div class="p-3 rounded-xl border border-rose-800/70 bg-rose-950/20 text-xs text-rose-200">${escapeHtml(errorMessage(res.status, res.data))}</div>`;
+    box.innerHTML = `<div class="p-3.5 rounded-xl border border-rose-200 bg-rose-50 text-xs text-rose-800">${escapeHtml(errorMessage(res.status, res.data))}</div>`;
     return;
   }
 
@@ -2664,24 +3205,42 @@ async function wizardLookupSerial() {
   refreshIcons();
 }
 
-/** Card thiết bị đã tìm thấy ở bước 1 (kèm tình trạng bảo hành để nhìn trước). */
+/** Card thiết bị đã tìm thấy ở bước 1 (kèm tình trạng bảo hành và cảnh báo phiếu đang mở nếu có). */
 function wizardDeviceFoundHtml(d) {
   if (!d || !d.serial_number) return "";
   const w = warrantyInfoFor(d.warranty_end_date);
   const note = w.days !== null && w.days < 0
-    ? `<div class="p-3 rounded-xl border border-rose-800/70 bg-rose-950/20 text-xs text-rose-200 mt-2">
+    ? `<div class="p-3 rounded-xl border border-rose-200 bg-rose-50 text-xs text-rose-800 mt-2">
          Thiết bị đã hết hạn bảo hành (hạn ${fmtDate(d.warranty_end_date)}). Vẫn tạo được phiếu nhưng phiếu sẽ được xử lý như trường hợp ngoài bảo hành.
        </div>`
     : "";
+
+  const openStatuses = ["RECEIVED", "INSPECTING", "REPAIRING", "COMPLETED", "REJECTED"];
+  const openTicket = (state.tickets || []).find((t) => (t.serial_number === d.serial_number || t.product_instance_id === d.id) && openStatuses.includes(t.status));
+  let openWarning = "";
+  if (openTicket) {
+    openWarning = `
+      <div class="p-3.5 rounded-xl border border-amber-300 bg-amber-50 text-xs text-amber-900 mt-2 flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+        <div>
+          <span class="font-bold text-amber-900">Cảnh báo phiếu đang mở:</span> Thiết bị này đang có phiếu <span class="font-mono font-bold">${escapeHtml(openTicket.ticket_code)}</span> (${escapeHtml(statusLabel(openTicket.status))}) chưa kết thúc.
+        </div>
+        <button type="button" class="btn btn-secondary btn-xs shrink-0 text-amber-900 border-amber-300 hover:bg-amber-100" onclick="openTicketModal(${openTicket.id})">
+          <i data-lucide="eye" class="w-3.5 h-3.5"></i> Xem phiếu đang xử lý
+        </button>
+      </div>`;
+  }
+
   return `
-    <div class="p-3 rounded-xl border border-emerald-800/60 bg-emerald-950/20">
-      <div class="flex flex-wrap items-center justify-between gap-2">
+    <div class="p-4 rounded-xl border border-emerald-200 bg-emerald-50/60">
+      <div class="flex flex-wrap items-center justify-between gap-3">
         <div class="text-xs">
-          <div class="font-semibold text-emerald-100">Đã tìm thấy thiết bị <span class="font-mono">${escapeHtml(d.serial_number)}</span></div>
-          <div class="text-slate-300 mt-1">
-            ${escapeHtml(displayText(d.product_name) || "–")}
-            &bull; Khách hàng: ${escapeHtml(displayText(d.customer_name) || "–")}
-            ${d.customer_phone ? `&bull; <span class="font-mono">${escapeHtml(d.customer_phone)}</span>` : ""}
+          <div class="font-bold text-emerald-900 flex items-center gap-1.5">
+            <i data-lucide="check-circle-2" class="w-4 h-4 text-emerald-600"></i> Đã tìm thấy thiết bị <span class="font-mono text-emerald-950 font-bold">${escapeHtml(d.serial_number)}</span>
+          </div>
+          <div class="text-slate-600 mt-1">
+            <span class="font-medium text-slate-900">${escapeHtml(displayText(d.product_name) || "–")}</span>
+            &bull; Khách hàng: <span class="font-medium text-slate-800">${escapeHtml(displayText(d.customer_name) || "–")}</span>
+            ${d.customer_phone ? `&bull; <span class="font-mono text-slate-700">${escapeHtml(d.customer_phone)}</span>` : ""}
             &bull; ${warrantyStatusHtml(d.warranty_end_date)}
           </div>
         </div>
@@ -2690,7 +3249,7 @@ function wizardDeviceFoundHtml(d) {
           <button type="button" class="btn btn-primary btn-sm" onclick="wizardGoToStep2()"><i data-lucide="arrow-right" class="w-3.5 h-3.5"></i> Tiếp tục bước 2</button>
         </div>
       </div>
-    </div>${note}`;
+    </div>${openWarning}${note}`;
 }
 
 /** BƯỚC 2: xem lại thiết bị đã chọn rồi mở form mô tả lỗi. */
@@ -2714,14 +3273,14 @@ async function wizardGoToStep2() {
  * Chỉ là nhắc để tránh phải nhập lại; việc chặn vẫn do hệ thống quyết định.
  */
 function wizardOpenTicketWarningHtml(d) {
-  const openStatuses = ["RECEIVED", "INSPECTING", "REPAIRING", "WAITING_RETURN"];
+  const openStatuses = ["RECEIVED", "INSPECTING", "REPAIRING", "COMPLETED", "REJECTED"];
   const open = state.tickets.find((t) => t.serial_number === d.serial_number && openStatuses.includes(t.status));
   if (!open) return "";
   return `
-    <div class="p-3 rounded-xl border border-amber-700/60 bg-amber-950/30 text-xs sm:col-span-2 lg:col-span-4">
-      <div class="font-semibold text-amber-200">Thiết bị này đang có phiếu chưa kết thúc</div>
-      <p class="text-slate-300 mt-1">
-        Phiếu <strong class="font-mono">${escapeHtml(open.ticket_code)}</strong> (${escapeHtml(statusLabel(open.status))}) vẫn đang được xử lý.
+    <div class="p-3.5 rounded-xl border border-amber-200 bg-amber-50 text-xs sm:col-span-2 lg:col-span-4">
+      <div class="font-bold text-amber-900">Thiết bị này đang có phiếu chưa kết thúc</div>
+      <p class="text-amber-800 mt-1">
+        Phiếu <strong class="font-mono text-amber-950 font-bold">${escapeHtml(open.ticket_code)}</strong> (${escapeHtml(statusLabel(open.status))}) vẫn đang được xử lý.
         Mỗi thiết bị chỉ có một phiếu đang xử lý, nên hãy xử lý phiếu cũ trước nếu khách không báo lỗi mới.
       </p>
       <button type="button" class="btn btn-secondary btn-sm mt-2" onclick="closeReceptionAndOpenTicket(${open.id})">
@@ -2738,14 +3297,14 @@ function closeReceptionAndOpenTicket(ticketId) {
 /** Tóm tắt thiết bị ở bước 2 để nhân viên đối chiếu trước khi tạo phiếu. */
 function wizardPreviewHtml(d) {
   const cell = (label, value) => `
-    <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-      <div class="text-slate-400 mb-1">${label}</div>
-      <div class="font-semibold text-slate-100">${value}</div>
+    <div class="p-3 bg-slate-50 rounded-xl border border-slate-200">
+      <div class="text-xs text-slate-500 font-semibold mb-1">${label}</div>
+      <div class="font-bold text-slate-900">${value}</div>
     </div>`;
   return [
-    cell("Thiết bị", `${escapeHtml(displayText(d.product_name) || "–")}<div class="font-mono text-cyan-300 text-[11px] mt-0.5">${escapeHtml(d.serial_number)}</div>`),
-    cell("Khách hàng", `${escapeHtml(displayText(d.customer_name) || "–")}<div class="font-mono text-slate-400 text-[11px] mt-0.5">${escapeHtml(d.customer_phone || "")}</div>`),
-    cell("Ngày mua", `<span class="font-mono">${fmtDate(d.purchase_date)}</span>`),
+    cell("Thiết bị", `${escapeHtml(displayText(d.product_name) || "–")}<div class="font-mono text-indigo-700 font-bold text-xs mt-0.5">${escapeHtml(d.serial_number)}</div>`),
+    cell("Khách hàng", `${escapeHtml(displayText(d.customer_name) || "–")}<div class="font-mono text-slate-600 text-xs mt-0.5">${escapeHtml(d.customer_phone || "")}</div>`),
+    cell("Ngày mua", `<span class="font-mono text-slate-800">${fmtDate(d.purchase_date)}</span>`),
     cell("Tình trạng bảo hành", warrantyStatusHtml(d.warranty_end_date)),
   ].join("");
 }
@@ -2754,8 +3313,74 @@ function wizardBackToStep1() {
   wizardShowStep(1);
 }
 
+/** Gợi ý nhóm lỗi trực tiếp (AI Chức năng 1) trong màn hình tiếp nhận */
+async function wizardSuggestCategory() {
+  const d = state.wizard.device;
+  const productName = d ? (d.product_name || "") : ($("wiz-product-name") ? $("wiz-product-name").value : "");
+  const desc = ($("wiz-desc") ? $("wiz-desc").value : "").trim();
+  if (!desc) {
+    showToast("Vui lòng nhập mô tả tình trạng lỗi trước khi yêu cầu AI gợi ý.", "warning");
+    if ($("wiz-desc")) $("wiz-desc").focus();
+    return;
+  }
+  const btn = $("btn-wiz-ai-suggest");
+  const origHtml = btn ? btn.innerHTML : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = '<i data-lucide="loader" class="w-4 h-4 animate-spin text-purple-600"></i> Đang phân tích...';
+    refreshIcons();
+  }
+
+  try {
+    const res = await apiFetch("/api/v1/ai/suggest-category", {
+      method: "POST",
+      body: {
+        product_name: productName || null,
+        issue_description: desc,
+      },
+    });
+    if (!res.ok) {
+      toastError(res, "Không thể lấy gợi ý loại lỗi từ AI.");
+      return;
+    }
+    const data = res.data || {};
+    const hintBox = $("wiz-ai-hint");
+    const hintText = $("wiz-ai-hint-text");
+    if (data.suggested_category_id) {
+      const select = $("wiz-category-select");
+      if (select) select.value = String(data.suggested_category_id);
+      if (hintBox && hintText) {
+        hintBox.classList.remove("hidden");
+        const confStr = data.confidence ? ` (độ chắc chắn: ${Math.round(data.confidence * 100)}%)` : "";
+        hintText.innerHTML = `<strong>Gợi ý:</strong> ${escapeHtml(data.suggested_category_name || "")}${confStr}. ${escapeHtml(data.reason || "")}<br><span class="text-slate-500 italic mt-0.5 block">Nội dung được AI gợi ý, cần kiểm tra trước khi sử dụng.</span>`;
+      }
+      showToast(`AI gợi ý nhóm lỗi: <strong>${escapeHtml(data.suggested_category_name || "")}</strong>`, "success");
+    } else {
+      if (hintBox && hintText) {
+        hintBox.classList.remove("hidden");
+        let extra = "";
+        if (Array.isArray(data.need_more_information) && data.need_more_information.length) {
+          extra = "<br><strong>Cần hỏi thêm khách:</strong> " + data.need_more_information.map(escapeHtml).join("; ");
+        }
+        hintText.innerHTML = `Mô tả hiện tại chưa đủ để AI phân loại lỗi chắc chắn. ${escapeHtml(data.reason || "")}${extra}<br><span class="text-slate-500 italic mt-0.5 block">Nội dung được AI gợi ý, cần kiểm tra trước khi sử dụng.</span>`;
+      }
+      showToast("Chưa đủ thông tin để AI gợi ý nhóm lỗi chính xác.", "info");
+    }
+    refreshIcons();
+  } catch (err) {
+    showToast("Lỗi khi kết nối dịch vụ AI.", "error");
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = origHtml;
+      refreshIcons();
+    }
+  }
+}
+
 /** BƯỚC 2 (hoàn tất): tạo phiếu bảo hành cho thiết bị đã chọn ở bước 1. */
 async function wizardSubmitTicket() {
+  const submitBtn = $("btn-wizard-submit");
   const d = state.wizard.device;
   if (!d) {
     showToast("Thiếu thông tin thiết bị, hãy chọn lại ở bước 1.", "warning");
@@ -2765,6 +3390,8 @@ async function wizardSubmitTicket() {
   const description = ($("wiz-desc").value || "").trim();
   const createdBy = parseInt($("wiz-created-by").value, 10);
   const categoryRaw = $("wiz-category-select").value;
+  const condition = ($("wiz-condition") ? $("wiz-condition").value : "").trim();
+  const accessories = ($("wiz-accessories") ? $("wiz-accessories").value : "").trim();
 
   clearFieldErrors(["wiz-desc", "wiz-created-by"]);
   let hasError = false;
@@ -2782,21 +3409,28 @@ async function wizardSubmitTicket() {
     service_center_id: 1,
     created_by: createdBy,
     issue_description: description,
+    device_condition: condition || null,
+    accessories_accompanying: accessories || null,
   };
   // Chỉ gửi nhãn lỗi khi nhân viên chủ động chọn; mặc định để trống cho luồng AI gợi ý.
   if (categoryRaw) payload.error_category_id = parseInt(categoryRaw, 10);
 
-  const res = await apiFetch("/api/v1/warranty-tickets/", { method: "POST", body: payload });
-  if (!res.ok) {
-    toastError(res, "Không tạo được phiếu bảo hành.");
-    return;
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const res = await apiFetch("/api/v1/warranty-tickets/", { method: "POST", body: payload });
+    if (!res.ok) {
+      toastError(res, "Không tạo được phiếu bảo hành.");
+      return;
+    }
+    const ticket = res.data || {};
+    showToast(`Đã tạo phiếu bảo hành <strong class="font-mono">${escapeHtml(ticket.ticket_code)}</strong> ở trạng thái "Đã tiếp nhận".`, "success", 7000);
+    wizardReset();
+    await loadTickets();
+    await loadDashboard();
+    if (ticket.id) openTicketModal(ticket.id);
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
   }
-  const ticket = res.data || {};
-  showToast(`Đã tạo phiếu bảo hành <strong class="font-mono">${escapeHtml(ticket.ticket_code)}</strong> ở trạng thái "Đã tiếp nhận".`, "success", 7000);
-  wizardReset();
-  await loadTickets();
-  await loadDashboard();
-  if (ticket.id) openTicketModal(ticket.id);
 }
 
 /* --------------------------- DANH SÁCH PHIẾU --------------------------- */
@@ -2805,6 +3439,7 @@ let ticketStatusFilter = "ALL";
 let ticketOnlyMine = false;
 
 async function loadTickets(statusFilter = null) {
+  const currentEpoch = state.sessionEpoch;
   if (statusFilter !== null) ticketStatusFilter = statusFilter;
   setTableLoading("tickets-table-body", 8);
 
@@ -2817,15 +3452,18 @@ async function loadTickets(statusFilter = null) {
   if (keyword) params.set("q", keyword);
 
   const res = await apiFetch(`/api/v1/warranty-tickets/?${params.toString()}`);
+  if (currentEpoch !== state.sessionEpoch) return;
   if (!res.ok) {
-    setTableMessage("tickets-table-body", 8, "Không tải được danh sách phiếu bảo hành.");
+    if (!state.tickets || !state.tickets.length) {
+      setTableMessage("tickets-table-body", 8, "Không tải được danh sách phiếu bảo hành.");
+    }
     toastError(res, "Không tải được danh sách phiếu bảo hành.");
     return;
   }
   state.tickets = Array.isArray(res.data) ? res.data : [];
   renderTickets(state.tickets);
   populateAiTicketSelect();
-  updateMyTicketFilterButton();
+  updateTicketScopeButtons();
 }
 
 /** Từ khoá đang nhập ở ô tìm kiếm của danh sách phiếu (rỗng nếu chưa nhập). */
@@ -2834,31 +3472,46 @@ function ticketSearchKeyword() {
   return box ? (box.value || "").trim() : "";
 }
 
-/** Bật/tắt bộ lọc "Phiếu của tôi" (việc do chính nhân viên đang đăng nhập phụ trách). */
-function toggleMyTickets() {
-  ticketOnlyMine = !ticketOnlyMine;
-  updateMyTicketFilterButton();
-  showToast(
-    ticketOnlyMine
-      ? "Đang xem các phiếu bạn đang phụ trách."
-      : "Đang xem phiếu của toàn bộ trung tâm.",
-    "info",
-    2500
-  );
+/** Thiết lập phạm vi danh sách phiếu: mine = true (việc của tôi/phiếu được giao) hoặc false (toàn trung tâm). */
+function setTicketScope(mine) {
+  ticketOnlyMine = !!mine;
+  updateTicketScopeButtons();
   loadTickets();
 }
 
-/** Đổi màu nút "Phiếu của tôi" để nhân viên biết bộ lọc đang bật. */
-function updateMyTicketFilterButton() {
-  const btn = $("ticket-my-filter");
-  if (!btn) return;
-  btn.classList.toggle("btn-primary", ticketOnlyMine);
-  btn.classList.toggle("btn-secondary", !ticketOnlyMine);
+/** Bật/tắt bộ lọc phạm vi trên danh sách phiếu. */
+function toggleMyTickets() {
+  setTicketScope(!ticketOnlyMine);
+}
+
+/** Đổi màu và nhãn nút lọc theo vai trò (Việc tại quầy / Phiếu được giao). */
+function updateTicketScopeButtons() {
+  const btnMine = $("btn-scope-mine");
+  const btnAll = $("btn-scope-all");
+  const lblMine = $("label-scope-mine");
+  const lblAll = $("label-scope-all");
+  if (!btnMine || !btnAll) return;
+
+  const role = state.session.user ? state.session.user.role : "";
+  if (role === "TECHNICIAN") {
+    if (lblMine) lblMine.textContent = "Phiếu được giao";
+    if (lblAll) lblAll.textContent = "Toàn trung tâm — chỉ xem";
+  } else if (role === "RECEPTIONIST") {
+    if (lblMine) lblMine.textContent = "Việc tại quầy";
+    if (lblAll) lblAll.textContent = "Toàn bộ phiếu";
+  } else {
+    if (lblMine) lblMine.textContent = "Việc của tôi";
+    if (lblAll) lblAll.textContent = "Toàn trung tâm";
+  }
+
+  btnMine.className = `btn btn-sm ${ticketOnlyMine ? "btn-primary font-bold shadow-sm" : "btn-secondary text-slate-600"} rounded-lg transition-all`;
+  btnAll.className = `btn btn-sm ${!ticketOnlyMine ? "btn-primary font-bold shadow-sm" : "btn-secondary text-slate-600"} rounded-lg transition-all`;
+  refreshIcons();
 }
 
 /** Phiếu đang xử lý (chưa kết thúc) luôn được ưu tiên hiển thị trước. */
 function sortTicketsForWork(items) {
-  const order = { RECEIVED: 0, INSPECTING: 1, REPAIRING: 2, WAITING_RETURN: 3, COMPLETED: 4, REJECTED: 5 };
+  const order = { RECEIVED: 0, INSPECTING: 1, REPAIRING: 2, COMPLETED: 3, REJECTED: 4, RETURNED: 5 };
   return items.slice().sort((a, b) => {
     const oa = order[a.status] === undefined ? 9 : order[a.status];
     const ob = order[b.status] === undefined ? 9 : order[b.status];
@@ -2867,13 +3520,9 @@ function sortTicketsForWork(items) {
   });
 }
 
-/** Nhân viên phụ trách = người thực hiện ở bước xử lý gần nhất (backend đã tính sẵn). */
+/** Nhân viên phụ trách / KTV phụ trách. */
 function ticketHandlerName(t) {
-  if (t && t.handler_name) return displayText(t.handler_name);
-  const history = Array.isArray(t.status_history) ? t.status_history : [];
-  const last = history.length ? history[history.length - 1] : null;
-  const userId = last ? last.changed_by : t.created_by;
-  return userName(userId);
+  return ticketTechnicianName(t);
 }
 
 /**
@@ -2911,39 +3560,74 @@ async function searchTicketByCode() {
 }
 
 /**
- * Danh sách phiếu: mỗi dòng có ĐÚNG MỘT hành động chính theo trạng thái + quyền
- * (nhãn và loại hành động do backend trả về), các bước phụ nằm trong menu "Thêm".
+ * Danh sách phiếu: đúng 8 cột đồng bộ với header:
+ * Mã phiếu | Khách hàng | Thiết bị / Số sê-ri | Trạng thái | KTV phụ trách | Ngày tiếp nhận | Loại lỗi | Thao tác
  */
 function renderTickets(tickets) {
   const tbody = $("tickets-table-body");
   if (!tbody) return;
   if (!tickets.length) {
-    setTableMessage(
-      "tickets-table-body",
-      8,
-      ticketOnlyMine
-        ? "Bạn hiện không có phiếu nào đang phụ trách. Bấm \"Phiếu của tôi\" lần nữa để xem toàn bộ."
-        : "Chưa có phiếu bảo hành nào phù hợp."
-    );
+    const role = state.session.user ? state.session.user.role : "";
+    let emptyMsg = "Chưa có phiếu bảo hành nào phù hợp.";
+    if (ticketSearchKeyword()) {
+      emptyMsg = `Không tìm thấy phiếu nào khớp với từ khóa "${ticketSearchKeyword()}".`;
+    } else if (ticketStatusFilter && ticketStatusFilter !== "ALL") {
+      const stName = statusLabel(ticketStatusFilter);
+      emptyMsg = ticketOnlyMine
+        ? (role === "TECHNICIAN" ? `Bạn không có phiếu nào ở bước "${stName}".` : `Không có phiếu nào ở bước "${stName}" trong danh sách của bạn.`)
+        : `Không có phiếu nào ở bước "${stName}" trong toàn trung tâm.`;
+    } else if (ticketOnlyMine) {
+      if (role === "TECHNICIAN") {
+        emptyMsg = 'Bạn chưa được phân công phiếu nào. Chọn "Toàn trung tâm — chỉ xem" để xem phiếu của trung tâm.';
+      } else if (role === "RECEPTIONIST") {
+        emptyMsg = 'Hiện không có phiếu nào cần xử lý tại quầy. Chọn "Toàn bộ phiếu" để xem toàn trung tâm.';
+      } else {
+        emptyMsg = 'Bạn hiện không có phiếu nào đang phụ trách.';
+      }
+    } else {
+      emptyMsg = "Trung tâm hiện chưa có phiếu bảo hành nào.";
+    }
+    setTableMessage("tickets-table-body", 8, emptyMsg);
     return;
   }
   tbody.innerHTML = sortTicketsForWork(tickets).map((t) => {
     const isTransition = t.action_kind === "transition" && t.primary_action;
     const target = isTransition ? t.primary_action.target : null;
     return `<tr class="table-row">
-      <td class="table-td font-mono font-semibold text-indigo-300">${escapeHtml(t.ticket_code)}</td>
-      <td class="table-td font-mono text-cyan-300">${escapeHtml(t.serial_number || "–")}<br><span class="text-[11px] text-slate-500">${escapeHtml(displayText(t.product_name) || "")}</span></td>
-      <td class="table-td text-slate-200">${escapeHtml(displayText(t.customer_name) || "–")}
-        <br><span class="text-[11px] text-slate-500 font-mono">${escapeHtml(t.customer_phone || "")}</span></td>
+      <td class="table-td">
+        <button type="button" class="font-semibold text-slate-900 hover:text-indigo-600 transition-colors text-left text-sm"
+                onclick="openTicketModal(${t.id})" title="Bấm để xem chi tiết phiếu">
+          ${escapeHtml(t.ticket_code)}
+        </button>
+      </td>
+      <td class="table-td">
+        <div class="font-semibold text-slate-900">${escapeHtml(displayText(t.customer_name) || "–")}</div>
+        <div class="text-xs text-slate-500 mt-0.5">${escapeHtml(t.customer_phone || "")}</div>
+      </td>
+      <td class="table-td">
+        <div class="text-slate-800 font-medium">${escapeHtml(displayText(t.product_name) || "–")}</div>
+        <div class="mt-0.5">
+          <button type="button" class="text-xs text-slate-500 hover:text-indigo-600 transition-colors text-left inline-block font-normal"
+                  onclick="openDeviceBySerialOrId(${t.product_instance_id || "null"}, '${escapeHtml(t.serial_number || "")}')" title="Bấm để xem thông tin thiết bị">
+            ${escapeHtml(t.serial_number || "–")}
+          </button>
+        </div>
+      </td>
       <td class="table-td">${statusBadge(t.status)}</td>
-      <td class="table-td text-slate-400">${fmtDateTime(t.created_at)}</td>
-      <td class="table-td text-slate-300 text-xs">${escapeHtml(ticketHandlerName(t))}</td>
-      <td class="table-td text-slate-400">${escapeHtml(t.error_category_name || categoryName(t.error_category_id))}</td>
+      <td class="table-td text-sm">
+        <div class="flex items-center gap-1.5">
+          <i data-lucide="user" class="w-3.5 h-3.5 text-slate-400 shrink-0"></i>
+          ${formatTechnicianCell(ticketTechnicianName(t))}
+        </div>
+      </td>
+      <td class="table-td text-sm font-mono text-slate-600">${fmtDateTime(t.created_at)}</td>
+      <td class="table-td text-sm text-slate-700">${escapeHtml(t.error_category_name || categoryName(t.error_category_id))}</td>
       <td class="table-td text-right">
-        <div class="flex flex-col items-end gap-1">
+        <div class="flex flex-col items-end gap-1.5">
           <button class="btn ${isTransition ? "btn-primary" : "btn-secondary"} btn-sm"
                   onclick="handleTicketAction(${t.id}, ${target ? `'${target}'` : "null"})">
-            <i data-lucide="${isTransition ? "arrow-right-circle" : "eye"}" class="w-3.5 h-3.5"></i> ${escapeHtml(t.action_label || "Xem phiếu")}
+            <i data-lucide="${target === "ASSIGN" ? "user-plus" : (isTransition ? "arrow-right-circle" : "eye")}" class="w-4 h-4"></i>
+            <span>${escapeHtml(t.action_label || "Xem phiếu")}</span>
           </button>
           ${rowExtraActionsHtml(t)}
         </div>
@@ -2998,32 +3682,32 @@ function renderStepsHtml(t) {
         { step: 1, status: "RECEIVED", label: "Tiếp nhận", state: "current" },
         { step: 2, status: "INSPECTING", label: "Kiểm tra", state: "pending" },
         { step: 3, status: "REPAIRING", label: "Sửa chữa", state: "pending" },
-        { step: 4, status: "WAITING_RETURN", label: "Chờ trả máy", state: "pending" },
-        { step: 5, status: "COMPLETED", label: "Hoàn tất", state: "pending" },
+        { step: 4, status: "COMPLETED", label: "Hoàn tất", state: "pending" },
+        { step: 5, status: "RETURNED", label: "Đã trả máy", state: "pending" },
       ];
   const chips = steps.map((step) => {
     const cls = step.state === "current"
-      ? "bg-indigo-600/30 border-indigo-400 text-indigo-100 font-semibold"
+      ? "bg-indigo-50 border-indigo-300 text-indigo-700 font-bold"
       : (step.state === "done"
-        ? "bg-emerald-950/40 border-emerald-700/60 text-emerald-200"
-        : "border-slate-800 text-slate-500");
+        ? "bg-emerald-50 border-emerald-300 text-emerald-800 font-medium"
+        : "border-slate-200 text-slate-400 bg-white");
     const who = step.by_name ? ` – ${displayText(step.by_name)}` : "";
     const when = step.at ? ` (${fmtDateTime(step.at)})` : "";
     return `<span class="px-2.5 py-1 rounded-lg border ${cls}" title="${escapeHtml(who + when)}">${step.step}. ${escapeHtml(step.label)}${step.state === "current" ? " (đang ở đây)" : ""}</span>`;
   });
   const rejected = t.status === "REJECTED"
-    ? '<span class="px-2.5 py-1 rounded-lg border bg-rose-950/50 border-rose-600/50 text-rose-200 font-semibold">Từ chối bảo hành</span>'
+    ? '<span class="px-2.5 py-1 rounded-lg border bg-rose-50 border-rose-300 text-rose-800 font-semibold">Từ chối (chờ trả máy)</span>'
     : "";
-  return chips.join('<i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-600"></i>') + rejected;
+  return chips.join('<i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-400"></i>') + rejected;
 }
 
-/** Danh sách điều kiện hoàn tất (đủ/chưa đủ) - do backend trả về. */
+/** Danh sách điều kiện trả máy (đủ/chưa đủ) - do backend trả về. */
 function renderCompletionChecklist(t) {
   const list = $("ws-completion-list");
   if (!list) return;
   const checks = Array.isArray(t.completion_checklist) ? t.completion_checklist : [];
   list.innerHTML = checks
-    .map((item) => `<div class="flex items-start gap-1.5 ${item.satisfied ? "text-emerald-300" : "text-slate-400"}">
+    .map((item) => `<div class="flex items-start gap-1.5 ${item.satisfied ? "text-emerald-700 font-medium" : "text-slate-500"}">
         <span>${item.satisfied ? "✔" : "○"}</span><span>${escapeHtml(item.label)}</span>
       </div>`)
     .join("");
@@ -3031,9 +3715,14 @@ function renderCompletionChecklist(t) {
   const box = $("ws-completion-blockers");
   if (box) {
     box.innerHTML = blockers.length
-      ? '<div class="font-semibold mb-0.5">Chưa thể hoàn tất:</div>' +
-        blockers.map((text) => `<div>• ${escapeHtml(text)}</div>`).join("")
-      : (t.status === "WAITING_RETURN" ? "Đủ điều kiện để xác nhận đã trả máy và hoàn tất phiếu." : "");
+      ? '<div class="font-semibold mb-0.5 text-rose-800">Chưa đủ điều kiện:</div>' +
+        blockers.map((text) => `<div class="text-rose-700">• ${escapeHtml(text)}</div>`).join("")
+      : (t.status === "COMPLETED" || t.status === "REJECTED" ? "Đủ điều kiện để xác nhận đã trả máy cho khách và đóng phiếu." : "");
+  }
+  const details = $("ws-completion-details");
+  if (details) {
+    const isTech = state.session.user && state.session.user.role === "TECHNICIAN";
+    details.open = !isTech;
   }
 }
 
@@ -3050,17 +3739,18 @@ function renderTicketTimeline(t) {
   box.innerHTML = history.map((h, idx) => {
     const fromLabel = h.from_label || (h.from_status ? statusLabel(h.from_status) : "");
     const toLabel = h.to_label || statusLabel(h.to_status);
-    const actor = h.changed_by_name ? displayText(h.changed_by_name) : userName(h.changed_by);
+    const actor = h.changed_by_name ? displayText(h.changed_by_name) : userShortName(h.changed_by);
+    const cleanNote = stripTechTags(humanizeText(h.note)) || "Không có ghi chú";
     return `
     <div class="flex items-start gap-3">
-      <div class="w-6 h-6 rounded-full bg-indigo-600/30 border border-indigo-400 text-indigo-200 flex items-center justify-center text-[11px] font-bold shrink-0">${idx + 1}</div>
+      <div class="w-6 h-6 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center text-xs font-bold shrink-0">${idx + 1}</div>
       <div class="flex-1 text-xs">
-        <div class="font-semibold text-slate-100 flex items-center justify-between gap-2">
+        <div class="font-bold text-slate-900 flex items-center justify-between gap-2">
           <span>${escapeHtml(fromLabel ? fromLabel + " → " : "")}${escapeHtml(toLabel)}</span>
-          <span class="text-slate-500 font-mono">${fmtDateTime(h.created_at)}</span>
+          <span class="text-slate-500 font-mono font-normal">${fmtDateTime(h.created_at)}</span>
         </div>
-        <div class="text-slate-400 mt-0.5">${escapeHtml(humanizeText(h.note) || "Không có ghi chú")}</div>
-        <div class="text-slate-500 mt-0.5">Người thực hiện: ${escapeHtml(actor)}</div>
+        <div class="text-slate-600 mt-0.5">${escapeHtml(cleanNote)}</div>
+        <div class="text-slate-500 mt-0.5 font-medium">Người thực hiện: <span class="text-slate-700">${escapeHtml(actor)}</span></div>
       </div>
     </div>`;
   }).join("");
@@ -3071,7 +3761,6 @@ function renderTicketWorkspace(t) {
   const customer = t.customer || {};
   const device = t.device || {};
   const intake = t.intake || {};
-  const diagnosis = t.diagnosis || {};
   const repair = t.repair || {};
   const handover = t.handover || {};
 
@@ -3081,7 +3770,7 @@ function renderTicketWorkspace(t) {
   badge.textContent = t.status_label || statusLabel(t.status);
   $("modal-status-hint").textContent = t.status_hint || "";
   const handlerChip = $("modal-handler-chip");
-  if (handlerChip) handlerChip.textContent = `Nhân viên phụ trách: ${t.handler_name || userName(t.created_by)}`;
+  if (handlerChip) handlerChip.textContent = `KTV phụ trách: ${ticketTechnicianName(t)}`;
   $("modal-ticket-progress").innerHTML = renderStepsHtml(t);
 
   // A. Khách hàng
@@ -3099,21 +3788,32 @@ function renderTicketWorkspace(t) {
     ? fmtDate(device.warranty_end_date)
     : fmtDate(t.warranty_end_date);
   $("modal-warranty-status").innerHTML = device.warranty_status_message
-    ? `<span class="font-semibold ${device.warranty_status === "Đã hết hạn" ? "text-rose-300" : "text-emerald-300"}">${escapeHtml(device.warranty_status)}</span>
-       <span class="text-slate-400"> – ${escapeHtml(device.warranty_status_message)}</span>`
+    ? `<span class="font-bold ${device.warranty_status === "Đã hết hạn" ? "text-rose-700" : "text-emerald-700"}">${escapeHtml(device.warranty_status)}</span>
+       <span class="text-slate-600 font-medium"> – ${escapeHtml(device.warranty_status_message)}</span>`
     : warrantyStatusHtml(t.warranty_end_date);
 
-  // C. Tiếp nhận (mô tả của KHÁCH HÀNG - không trộn với kết luận của kỹ thuật viên)
+  // Tiếp nhận máy (ngoại quan, phụ kiện)
   $("modal-ticket-created").textContent = fmtDateTime(intake.received_at || t.created_at);
   $("modal-created-by").textContent = intake.received_by_name || userName(t.created_by);
-  $("modal-ticket-desc").textContent =
-    humanizeText(intake.issue_description || t.issue_description) ||
-    "Khách hàng chưa cung cấp mô tả tình trạng lỗi.";
-  // Khối "Hỗ trợ chẩn đoán": 3 phần tách biệt (khách mô tả / hệ thống gợi ý / kỹ thuật viên kết luận)
-  renderDiagnosisSupport(t);
+  if ($("modal-ticket-desc")) {
+    $("modal-ticket-desc").textContent = humanizeText(intake.issue_description || t.issue_description) || "";
+  }
+  if ($("modal-device-condition")) {
+    $("modal-device-condition").textContent = intake.device_condition || t.device_condition || "Thân máy nguyên vẹn, không ghi nhận trầy xước đặc biệt.";
+  }
+  if ($("modal-accessories")) {
+    $("modal-accessories").textContent = intake.accessories_accompanying || t.accessories_accompanying || "Không kèm phụ kiện.";
+  }
 
-  // D. Chẩn đoán - kết luận của kỹ thuật viên (AI chỉ gợi ý, ở khối riêng)
-  renderDiagnosisSection(t);
+  // Khối "Kiểm tra và chẩn đoán": mô tả khách + gợi ý AI + kết luận KTV
+  if ($("ws-support-customer")) {
+    $("ws-support-customer").textContent =
+      humanizeText((intake && intake.issue_description) || t.issue_description) ||
+      "Khách hàng chưa cung cấp mô tả tình trạng lỗi.";
+  }
+  renderAiSuggestionBox(t);
+  renderDiagnosisOfficial(t);
+
   // E. Sửa chữa
   renderRepairSection(t);
   // F. Trả máy
@@ -3121,6 +3821,33 @@ function renderTicketWorkspace(t) {
 
   // Điều kiện hoàn tất + lý do từ chối (nếu có)
   renderCompletionChecklist(t);
+
+  // Đề xuất từ chối bảo hành (chờ Quản lý duyệt)
+  const proposalBox = $("modal-rejection-proposal-box");
+  if (proposalBox) {
+    if (t.status === "INSPECTING" && t.rejection_proposal_note) {
+      proposalBox.classList.remove("hidden");
+      const noteEl = $("modal-rejection-proposal-note");
+      if (noteEl) noteEl.textContent = humanizeText(t.rejection_proposal_note);
+      const actionEl = $("modal-rejection-proposal-actions");
+      if (actionEl) {
+        if (isManager() || hasPerm("ticket.reject")) {
+          actionEl.innerHTML = `
+            <button type="button" class="btn btn-danger btn-sm" onclick="reviewRejectionProposal(${t.id}, 'APPROVED')">
+              <i data-lucide="check-circle" class="w-3.5 h-3.5"></i> Duyệt từ chối
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="reviewRejectionProposal(${t.id}, 'DECLINED')">
+              <i data-lucide="x-circle" class="w-3.5 h-3.5"></i> Không đồng ý (Tiếp tục xử lý)
+            </button>`;
+        } else {
+          actionEl.innerHTML = `<span class="text-xs text-amber-800 italic flex items-center gap-1.5"><i data-lucide="clock" class="w-3.5 h-3.5"></i> Đã gửi đề xuất từ chối, đang chờ Quản lý xem xét phê duyệt.</span>`;
+        }
+      }
+    } else {
+      proposalBox.classList.add("hidden");
+    }
+  }
+
   const rejectionBox = $("modal-rejection-box");
   if (t.status === "REJECTED" && t.rejection_reason) {
     rejectionBox.classList.remove("hidden");
@@ -3134,76 +3861,157 @@ function renderTicketWorkspace(t) {
   refreshIcons();
 }
 
-/**
- * Khối "Hỗ trợ chẩn đoán": 3 phần TÁCH BIỆT theo đúng nghiệp vụ
- *   1. Khách hàng mô tả (dữ liệu tiếp nhận)
- *   2. Hệ thống gợi ý loại lỗi (chỉ tham khảo, không phải kết luận)
- *   3. Kết luận của kỹ thuật viên (người có quyền xác nhận)
- * Không gọi gợi ý của hệ thống là "kết luận" và không tự ghi vào phiếu.
- */
-function renderDiagnosisSupport(t) {
-  const customerBox = $("ws-support-customer");
-  if (customerBox) {
-    customerBox.textContent =
-      humanizeText((t.intake && t.intake.issue_description) || t.issue_description) ||
-      "Khách hàng chưa cung cấp mô tả tình trạng lỗi.";
+/** Khối gợi ý loại lỗi tham khảo (AI) - thu gọn khi đã có kết luận chính thức. */
+function renderAiSuggestionBox(t) {
+  const container = $("ws-ai-suggestion-box");
+  if (!container) return;
+  const ai = t.ai_suggestion || {};
+  const diagnosis = t.diagnosis || {};
+  const hasConclusion = Boolean(diagnosis.error_category_name || diagnosis.note);
+  const isOpen = !hasConclusion;
+
+  if (!ai.available) {
+    container.innerHTML = `
+      <div class="p-3 rounded-lg border border-slate-200 bg-white text-xs text-slate-500 flex items-center justify-between">
+        <span>Chưa có gợi ý loại lỗi từ hệ thống AI.</span>
+      </div>`;
+    return;
   }
 
-  const aiBox = $("ws-support-ai");
-  if (aiBox) {
-    const ai = t.ai_suggestion || {};
-    if (!ai.available) {
-      aiBox.innerHTML = '<span class="text-slate-400">Chưa có gợi ý cho phiếu này.</span>';
-    } else {
-      const label = ai.suggested_category_name
-        ? displayText(ai.suggested_category_name)
-        : "chưa đủ thông tin để gợi ý";
-      const conf = ai.confidence !== null && ai.confidence !== undefined
-        ? ` (mức độ chắc chắn ${confidencePercent(ai.confidence)})`
-        : "";
-      aiBox.innerHTML = `<span class="font-semibold text-fuchsia-200">${escapeHtml(label)}</span>${escapeHtml(conf)}
-        <div class="text-[11px] text-slate-500 mt-1">Chỉ là gợi ý để tham khảo, không phải kết luận của phiếu.</div>`;
-    }
+  const isSim = ai.is_simulation;
+  const simBadge = isSim
+    ? `<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">Chế độ mô phỏng</span>`
+    : `<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-indigo-100 text-indigo-800 border border-indigo-200">${escapeHtml(ai.simulation_label || "AI Engine")}</span>`;
+
+  const hasValidLabel = Boolean(ai.suggested_category_id && ai.suggested_category_name);
+  const labelText = hasValidLabel
+    ? displayText(ai.suggested_category_name)
+    : "Chưa xác định nhóm lỗi";
+
+  // Khi thiếu thông tin hoặc không xác định được nhóm lỗi: KHÔNG hiển thị phần trăm độ chắc chắn
+  const confText = (hasValidLabel && ai.confidence !== null && ai.confidence !== undefined)
+    ? ` • <span class="font-mono font-bold ${confidenceColor(ai.confidence)}">Mức độ chắc chắn: ${confidencePercent(ai.confidence)}</span>`
+    : "";
+
+  let questionsHtml = "";
+  if (Array.isArray(ai.need_more_information) && ai.need_more_information.length) {
+    questionsHtml = `
+      <div class="mt-2.5 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-xs text-amber-900">
+        <div class="font-bold mb-1 flex items-center gap-1">
+          <i data-lucide="help-circle" class="w-3.5 h-3.5 text-amber-700"></i> Câu hỏi bổ sung cho khách hàng:
+        </div>
+        <ul class="list-disc pl-4 space-y-0.5">
+          ${ai.need_more_information.map((q) => `<li>${escapeHtml(humanizeText(q))}</li>`).join("")}
+        </ul>
+      </div>`;
   }
 
-  const conclusionBox = $("ws-support-conclusion");
-  if (conclusionBox) {
-    const diagnosis = t.diagnosis || {};
-    const lines = [];
-    if (diagnosis.error_category_name) {
-      lines.push(`Loại lỗi: <span class="font-semibold text-slate-100">${escapeHtml(displayText(diagnosis.error_category_name))}</span>`);
-    }
-    if (diagnosis.note) {
-      lines.push(escapeHtml(humanizeText(diagnosis.note)));
-    }
-    if (diagnosis.confirmed_by_name) {
-      lines.push(`<span class="text-[11px] text-slate-500">Ghi nhận bởi ${escapeHtml(displayText(diagnosis.confirmed_by_name))}${diagnosis.confirmed_at ? " • " + fmtDateTime(diagnosis.confirmed_at) : ""}</span>`);
-    }
-    conclusionBox.innerHTML = lines.length
-      ? lines.join("<br>")
-      : '<span class="text-slate-400">Kỹ thuật viên chưa ghi kết luận cho phiếu này.</span>';
-  }
+  const userRole = state.session.user ? state.session.user.role : "";
+  const isAssignedTech = userRole === "TECHNICIAN" && t.assigned_technician_id === (state.session.user && state.session.user.id);
+  const isTerminal = ["COMPLETED", "REJECTED", "RETURNED"].includes(t.status);
+  const canConfirmAi = (isAssignedTech || userRole === "MANAGER") && !isTerminal && hasValidLabel && ai.review_status === "PENDING";
+
+  const actionButtons = canConfirmAi
+    ? `<div class="mt-2.5 pt-2 border-t border-purple-100 flex items-center gap-2">
+        <button type="button" class="btn btn-sm btn-success" onclick="confirmAiCategoryFromSection(${ai.ai_result_id})">
+          <i data-lucide="check" class="w-3.5 h-3.5"></i> Xác nhận nhóm lỗi này
+        </button>
+        <button type="button" class="btn btn-sm btn-secondary" onclick="openDiagnosisModal()">
+          <i data-lucide="edit" class="w-3.5 h-3.5"></i> Chọn nhóm lỗi khác
+        </button>
+      </div>`
+    : "";
+
+  const reviewBadge = ai.review_status === "APPROVED"
+    ? '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">Đã xác nhận vào phiếu</span>'
+    : (ai.review_status === "REJECTED"
+        ? '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-rose-100 text-rose-800 border border-rose-200">Không dùng gợi ý</span>'
+        : '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-purple-100 text-purple-800 border border-purple-200">Chờ xác nhận</span>');
+
+  container.innerHTML = `
+    <details class="group rounded-lg border border-purple-200 bg-purple-50/40" ${isOpen ? "open" : ""}>
+      <summary class="p-3 cursor-pointer select-none flex items-center justify-between text-xs">
+        <div class="flex items-center gap-2 flex-wrap">
+          <span class="font-bold text-purple-900 flex items-center gap-1.5">
+            <i data-lucide="wand-2" class="w-3.5 h-3.5 text-purple-600"></i> Gợi ý tham khảo (AI)
+          </span>
+          ${simBadge}
+          <strong class="${hasValidLabel ? "text-purple-800" : "text-amber-800"}">${escapeHtml(labelText)}</strong>
+          ${confText}
+          ${reviewBadge}
+        </div>
+        <i data-lucide="chevron-down" class="w-4 h-4 text-purple-600 group-open:rotate-180 transition-transform"></i>
+      </summary>
+      <div class="px-3 pb-3 pt-1 text-xs border-t border-purple-100 text-slate-700">
+        <div class="text-slate-600 mt-1">${escapeHtml(aiReasonText(ai))}</div>
+        ${questionsHtml}
+        ${actionButtons}
+        <div class="text-[11px] text-slate-500 mt-2 italic">
+          Gợi ý AI chỉ mang tính tham khảo. Kết luận chính thức do kỹ thuật viên phụ trách hoặc quản lý xác nhận.
+        </div>
+      </div>
+    </details>`;
 }
 
-/** D. Khối chẩn đoán: kết luận của kỹ thuật viên (KHÁC với gợi ý của AI). */
-function renderDiagnosisSection(t) {
+/** Khối kết luận chính thức của kỹ thuật viên. */
+function renderDiagnosisOfficial(t) {
   const diagnosis = t.diagnosis || {};
   const meta = [];
   if (diagnosis.error_category_name) {
-    meta.push(`Loại lỗi: <strong class="text-slate-200">${escapeHtml(diagnosis.error_category_name)}</strong>`);
+    meta.push(`Nhóm lỗi chính thức: <strong class="text-slate-900">${escapeHtml(displayText(diagnosis.error_category_name))}</strong>`);
+  } else {
+    meta.push(`Nhóm lỗi: <span class="text-amber-800 font-medium">Chưa xác nhận</span>`);
   }
   if (diagnosis.confirmed_by_name) {
-    meta.push(`Người xác nhận: <span class="text-slate-300">${escapeHtml(displayText(diagnosis.confirmed_by_name))}</span>`);
+    meta.push(`Người xác nhận: <strong class="text-slate-800">${escapeHtml(displayText(diagnosis.confirmed_by_name))}</strong>`);
   }
   if (diagnosis.confirmed_at) {
-    meta.push(`Thời điểm: <span class="font-mono text-slate-300">${fmtDateTime(diagnosis.confirmed_at)}</span>`);
+    meta.push(`Thời điểm: <span class="font-mono text-slate-700">${fmtDateTime(diagnosis.confirmed_at)}</span>`);
   }
+
+  const badgeBox = $("ws-official-badge");
+  if (badgeBox) {
+    badgeBox.innerHTML = diagnosis.error_category_name
+      ? '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-emerald-100 text-emerald-800 border border-emerald-200">Đã có kết luận kỹ thuật</span>'
+      : '<span class="px-2 py-0.5 rounded text-[11px] font-semibold bg-amber-100 text-amber-800 border border-amber-200">Chờ kỹ thuật viên kết luận</span>';
+  }
+
   $("ws-diagnosis-body").innerHTML = humanizeText(diagnosis.note)
     ? escapeHtml(humanizeText(diagnosis.note))
-    : '<span class="text-amber-300/90">Chưa có kết luận chẩn đoán. Kỹ thuật viên cần kiểm tra máy và ghi nhận.</span>';
+    : '<span class="text-amber-800 font-medium">Chưa có ghi chép chẩn đoán. Kỹ thuật viên phụ trách cần kiểm tra máy và ghi nhận kết luận.</span>';
   $("ws-diagnosis-meta").innerHTML = meta.join(" &bull; ");
+
   const btn = $("btn-edit-diagnosis");
   if (btn) btn.classList.toggle("hidden", !t.can_edit_diagnosis);
+
+  const btnAiSuggest = $("btn-ai-suggest-ticket");
+  const isTerminal = ["COMPLETED", "REJECTED", "RETURNED"].includes(t.status);
+  if (btnAiSuggest) {
+    btnAiSuggest.classList.toggle("hidden", isTerminal || !hasPerm("ai.classify"));
+  }
+}
+
+/** Xác nhận gợi ý loại lỗi trực tiếp từ khu vực Kiểm tra và chẩn đoán. */
+async function confirmAiCategoryFromSection(resultId) {
+  if (!state.selectedTicket) return;
+  const t = state.selectedTicket;
+  const user = state.session.user;
+  if (!user) {
+    showToast("Vui lòng đăng nhập lại.", "warning");
+    return;
+  }
+  const res = await apiFetch(`/api/v1/ai/results/${resultId}/review`, {
+    method: "PATCH",
+    body: { reviewed_by: user.id, decision: "APPROVED" },
+  });
+  if (!res.ok) {
+    toastError(res, "Không xác nhận được nhóm lỗi.");
+    return;
+  }
+  showToast("Đã xác nhận nhóm lỗi kỹ thuật thành công.", "success");
+  await openTicketModal(t.id);
+  await loadTickets();
+  await loadDashboard();
 }
 
 /** E. Khối sửa chữa: nội dung đã kiểm tra/đã sửa, linh kiện thay thế, nhật ký sửa chữa. */
@@ -3211,22 +4019,22 @@ function renderRepairSection(t) {
   const repair = t.repair || {};
   $("ws-repair-body").innerHTML = humanizeText(repair.content)
     ? escapeHtml(humanizeText(repair.content))
-    : '<span class="text-slate-400">Chưa ghi nhận nội dung đã kiểm tra / đã sửa chữa.</span>';
+    : '<span class="text-slate-500">Chưa ghi nhận nội dung đã kiểm tra / đã sửa chữa.</span>';
 
   const meta = [];
-  if (repair.technician_name) meta.push(`Người thực hiện: ${escapeHtml(displayText(repair.technician_name))}`);
-  if (repair.recorded_at) meta.push(`Thời điểm: <span class="font-mono">${fmtDateTime(repair.recorded_at)}</span>`);
+  if (repair.technician_name) meta.push(`Người thực hiện: <span class="text-slate-800 font-medium">${escapeHtml(displayText(repair.technician_name))}</span>`);
+  if (repair.recorded_at) meta.push(`Thời điểm: <span class="font-mono text-slate-700">${fmtDateTime(repair.recorded_at)}</span>`);
   if (repair.note) meta.push(`Ghi chú: ${escapeHtml(humanizeText(repair.note))}`);
   $("ws-repair-parts").innerHTML =
     (repair.parts
-      ? `Linh kiện/thành phần thay thế: <span class="text-slate-200">${escapeHtml(humanizeText(repair.parts))}</span><br>`
+      ? `Linh kiện/thành phần thay thế: <span class="text-slate-900 font-medium">${escapeHtml(humanizeText(repair.parts))}</span><br>`
       : "") + meta.join(" &bull; ");
 
   const logs = Array.isArray(repair.logs) ? repair.logs : [];
   $("ws-repair-logs").innerHTML = logs.length
-    ? `<div class="text-[11px] text-slate-500 mb-0.5">Nhật ký sửa chữa (${logs.length} lần):</div>` +
-      logs.map((log) => `<div class="text-[11px] text-slate-400">• <span class="font-mono">${fmtDateTime(log.logged_at)}</span>
-        – ${escapeHtml(displayText(log.technician_name) || "")}: ${escapeHtml(humanizeText(log.action_description) || "")}
+    ? `<div class="text-xs text-slate-600 font-bold mb-1">Nhật ký sửa chữa (${logs.length} lần):</div>` +
+      logs.map((log) => `<div class="text-xs text-slate-600">• <span class="font-mono text-slate-700">${fmtDateTime(log.logged_at)}</span>
+        – <strong class="text-slate-800">${escapeHtml(displayText(log.technician_name) || "")}</strong>: ${escapeHtml(humanizeText(log.action_description) || "")}
         ${log.parts_used ? `<span class="text-slate-500">(linh kiện: ${escapeHtml(humanizeText(log.parts_used))})</span>` : ""}</div>`).join("")
     : "";
 
@@ -3238,30 +4046,45 @@ function renderRepairSection(t) {
 function renderHandoverSection(t) {
   const handover = t.handover || {};
   const box = $("ws-handover-box");
-  const isWaiting = !!handover.is_waiting_return || t.status === "WAITING_RETURN";
-  box.className = "p-3 rounded-xl border " + (
+  const isWaiting = t.status === "COMPLETED" || t.status === "REJECTED";
+  const isClosed = t.status === "RETURNED";
+  box.className = "p-3.5 rounded-xl border " + (
     isWaiting
-      ? "border-cyan-600/50 bg-cyan-950/30"
-      : (t.status === "COMPLETED" ? "border-emerald-700/50 bg-emerald-950/20" : "border-slate-800 bg-slate-900/70")
+      ? "border-cyan-200 bg-cyan-50"
+      : (isClosed ? "border-emerald-200 bg-emerald-50" : "border-slate-200 bg-slate-50")
   );
 
   const lines = [
-    `<div class="font-semibold ${isWaiting ? "text-cyan-200" : "text-slate-200"}">${escapeHtml(handover.status_message || statusLabel(t.status))}</div>`,
+    `<div class="font-bold ${isWaiting ? "text-cyan-900" : (isClosed ? "text-emerald-900" : "text-slate-900")}">${escapeHtml(handover.status_message || statusLabel(t.status))}</div>`,
   ];
+  if (t.resolution) {
+    const resLabel = t.resolution === "COMPLETED" ? "Sửa chữa hoàn tất" : (t.resolution === "REJECTED" ? "Từ chối bảo hành" : t.resolution);
+    lines.push(`<div class="text-xs text-slate-600 mt-1">Kết quả đóng phiếu: <span class="font-bold text-slate-900">${escapeHtml(resLabel)}</span></div>`);
+  }
+  if (handover.processing_time_display) {
+    lines.push(`<div class="text-xs text-slate-600 mt-1">Thời gian xử lý kỹ thuật: <span class="font-mono text-slate-900 font-semibold">${escapeHtml(handover.processing_time_display)}</span></div>`);
+  } else if (handover.processing_time_hours !== null && handover.processing_time_hours !== undefined) {
+    lines.push(`<div class="text-xs text-slate-600 mt-1">Thời gian xử lý kỹ thuật: <span class="font-mono text-slate-900 font-semibold">${handover.processing_time_hours} giờ</span></div>`);
+  }
+  if (handover.waiting_time_display) {
+    lines.push(`<div class="text-xs text-slate-600 mt-0.5">Thời gian chờ nhận máy: <span class="font-mono text-slate-900 font-semibold">${escapeHtml(handover.waiting_time_display)}</span></div>`);
+  } else if (handover.waiting_time_hours !== null && handover.waiting_time_hours !== undefined) {
+    lines.push(`<div class="text-xs text-slate-600 mt-0.5">Thời gian chờ nhận máy: <span class="font-mono text-slate-900 font-semibold">${handover.waiting_time_hours} giờ</span></div>`);
+  }
   if (handover.repair_completed_at) {
-    lines.push(`<div class="text-slate-400 mt-1">Hoàn thành sửa chữa: <span class="font-mono text-slate-200">${fmtDateTime(handover.repair_completed_at)}</span>${
+    lines.push(`<div class="text-slate-500 mt-1 text-xs">Hoàn thành sửa chữa: <span class="font-mono text-slate-700">${fmtDateTime(handover.repair_completed_at)}</span>${
       handover.repair_completed_by_name
-        ? ` – <span class="text-slate-200">${escapeHtml(displayText(handover.repair_completed_by_name))}</span>`
+        ? ` – <span class="text-slate-800 font-medium">${escapeHtml(displayText(handover.repair_completed_by_name))}</span>`
         : ""}</div>`);
   }
   if (t.handed_over_at) {
-    lines.push(`<div class="text-slate-400 mt-1">Đã trả máy lúc: <span class="font-mono text-slate-200">${fmtDateTime(t.handed_over_at)}</span>${
+    lines.push(`<div class="text-slate-500 mt-1 text-xs">Đã trả máy lúc: <span class="font-mono text-slate-700">${fmtDateTime(t.handed_over_at)}</span>${
       handover.returned_by_name
-        ? ` – <span class="text-slate-200">${escapeHtml(displayText(handover.returned_by_name))}</span>`
+        ? ` – <span class="text-slate-800 font-medium">${escapeHtml(displayText(handover.returned_by_name))}</span>`
         : ""}</div>`);
   }
   if (handover.note) {
-    lines.push(`<div class="text-slate-400 mt-1">Ghi chú bàn giao: <span class="text-slate-200">${escapeHtml(humanizeText(handover.note))}</span></div>`);
+    lines.push(`<div class="text-slate-600 mt-1 text-xs">Ghi chú bàn giao: <span class="text-slate-900 font-medium">${escapeHtml(humanizeText(handover.note))}</span></div>`);
   }
   $("ws-handover-body").innerHTML = lines.join("");
 }
@@ -3272,23 +4095,62 @@ function renderStateActions(t) {
   if (!box) return;
   const notesBox = $("modal-permission-notes");
   const actions = Array.isArray(t.available_actions) ? t.available_actions : [];
-  const notes = Array.isArray(t.permission_notes) ? t.permission_notes : [];
+  const userRole = state.session.user ? state.session.user.role : null;
 
   if (notesBox) {
-    notesBox.innerHTML = notes.map((text) => `<div>• ${escapeHtml(humanizeText(text))}</div>`).join("");
+    notesBox.innerHTML = "";
   }
 
-  if (!actions.length) {
-    const done = t.status === "COMPLETED" || t.status === "REJECTED";
-    box.innerHTML = done
-      ? `<div class="text-xs text-slate-400">Phiếu đã ở trạng thái kết thúc (${escapeHtml(t.status_label || statusLabel(t.status))}), không thể chuyển thêm.</div>`
-      : '<div class="text-xs text-slate-400">Vai trò hiện tại không có thao tác nào phù hợp với bước này. Xem ghi chú bên dưới để biết việc này của ai.</div>';
+  // KTV xem phiếu Hoàn tất: chỉ ghi ngắn: "Đã hoàn tất sửa chữa. Chờ quầy tiếp nhận bàn giao."
+  if (userRole === "TECHNICIAN" && t.status === "COMPLETED") {
+    box.innerHTML = `<div class="p-3 rounded-xl bg-emerald-50 border border-emerald-200 text-xs text-emerald-800 font-semibold flex items-center gap-2">
+      <i data-lucide="check-circle" class="w-4 h-4 text-emerald-600 shrink-0"></i>
+      <span>Đã hoàn tất sửa chữa. Chờ quầy tiếp nhận bàn giao.</span>
+    </div>`;
+    refreshIcons();
     return;
   }
-  box.innerHTML = actions
-    .map((action) => `<button class="btn btn-${escapeHtml(action.style || "primary")}" onclick="startTransition('${action.target}')">
-        <i data-lucide="arrow-right-circle" class="w-4 h-4"></i> ${escapeHtml(action.button_label)}</button>`)
-    .join("");
+
+  const buttons = [];
+
+  // Nút phân công / phân công lại KTV: CHỈ QUẢN LÝ được thực hiện (khi phiếu đang ở RECEIVED, INSPECTING, REPAIRING)
+  const assignableStatuses = ["RECEIVED", "INSPECTING", "REPAIRING"];
+  if (isManager() && assignableStatuses.includes(t.status)) {
+    const assignText = t.assigned_technician_id ? "Phân công lại KTV" : "Phân công KTV";
+    buttons.push(`<button class="btn btn-secondary" onclick="openAssignModal(${t.id})">
+      <i data-lucide="user-plus" class="w-4 h-4"></i> ${assignText}</button>`);
+  }
+
+  // Các nút hành động chính từ backend
+  actions.forEach((action) => {
+    buttons.push(`<button class="btn btn-${escapeHtml(action.style || "primary")}" onclick="startTransition('${action.target}')">
+      <i data-lucide="arrow-right-circle" class="w-4 h-4"></i> ${escapeHtml(action.button_label)}</button>`);
+  });
+
+  // Nút Đề xuất từ chối: KTV được phân công hoặc Quản lý khi phiếu ở INSPECTING và chưa có đề xuất
+  const isAssignedTech = userRole === "TECHNICIAN" && t.assigned_technician_id === (state.session.user && state.session.user.id);
+  if (t.status === "INSPECTING" && (isAssignedTech || userRole === "MANAGER") && !t.rejection_proposal_note) {
+    buttons.push(`<button class="btn btn-danger" onclick="openProposeRejectionModal(${t.id})">
+      <i data-lucide="file-warning" class="w-4 h-4"></i> Đề xuất từ chối</button>`);
+  }
+
+  if (!buttons.length) {
+    const done = t.status === "RETURNED";
+    const isUnassigned = !t.assigned_technician_id;
+    if (isUnassigned && t.status === "RECEIVED" && userRole === "RECEPTIONIST") {
+      box.innerHTML = `<div class="p-3 rounded-xl bg-amber-50 border border-amber-200 text-xs text-amber-800 font-medium flex items-center gap-2">
+        <i data-lucide="clock" class="w-4 h-4 text-amber-600 shrink-0"></i>
+        <span>Phiếu chưa phân công kỹ thuật viên. Đang chờ Quản lý phân công.</span>
+      </div>`;
+    } else {
+      box.innerHTML = done
+        ? `<div class="text-xs text-slate-500 font-medium flex items-center gap-1.5"><i data-lucide="check" class="w-4 h-4 text-emerald-600"></i> Phiếu đã bàn giao máy cho khách và đóng thành công.</div>`
+        : '<div class="text-xs text-slate-500">Không có thao tác khả dụng ở bước hiện tại.</div>';
+    }
+    refreshIcons();
+    return;
+  }
+  box.innerHTML = buttons.join("");
   refreshIcons();
 }
 
@@ -3330,11 +4192,25 @@ function startTransition(targetStatus) {
   }
 
   const isReject = targetStatus === "REJECTED";
-  const staff = staffSelectOptions("TECHNICIAN");
+  const staff = staffSelectOptions(targetStatus === "RETURNED" ? "RECEPTIONIST" : "TECHNICIAN");
   const fieldSpecs = Array.isArray(action.fields) ? action.fields : [];
   const categories = categorySelectOptions(t.error_category_id);
   const fields = [];
 
+  // 1. Phân công kỹ thuật viên (nếu bước chuyển sang INSPECTING yêu cầu)
+  if (fieldSpecs.includes("technician_id")) {
+    const techUsers = (state.users || []).filter((u) => u.role === "TECHNICIAN");
+    fields.push({
+      id: "technician_id",
+      label: "Kỹ thuật viên phụ trách",
+      options: techUsers.map((u) => ({ value: u.id, label: `${displayText(u.full_name)} (${u.username})` })),
+      defaultValue: t.assigned_technician_id ? String(t.assigned_technician_id) : (techUsers.length ? String(techUsers[0].id) : ""),
+      required: true,
+      hint: "Bắt buộc có kỹ thuật viên phụ trách trước khi chuyển sang Kiểm tra.",
+    });
+  }
+
+  // 2. Chẩn đoán & xác định đủ điều kiện bảo hành (INSPECTING -> REPAIRING)
   if (fieldSpecs.includes("diagnosis_note")) {
     fields.push({
       id: "diagnosis_note",
@@ -3342,7 +4218,7 @@ function startTransition(targetStatus) {
       placeholder: "Ví dụ: IC nguồn bị chập, tụ lọc nguồn phồng",
       defaultValue: t.diagnosis && t.diagnosis.note ? t.diagnosis.note : "",
       required: true,
-      hint: "Đây là kết luận của người kiểm tra, KHÔNG phải gợi ý của hệ thống.",
+      hint: "Đây là kết luận của kỹ thuật viên, KHÔNG phải gợi ý của hệ thống.",
     });
   }
   if (fieldSpecs.includes("error_category_id") && state.categories.length) {
@@ -3353,11 +4229,34 @@ function startTransition(targetStatus) {
       defaultValue: categories.selected,
     });
   }
+  if (fieldSpecs.includes("is_warranty_eligible")) {
+    fields.push({
+      id: "is_warranty_eligible",
+      label: "Xác định điều kiện bảo hành",
+      options: [
+        { value: "true", label: "✔ Đủ điều kiện bảo hành" },
+        { value: "false", label: "✖ Không đủ điều kiện bảo hành" },
+      ],
+      defaultValue: t.is_warranty_eligible === false ? "false" : "true",
+      required: true,
+      hint: "Bắt buộc xác định đủ điều kiện bảo hành để chuyển sang Sửa chữa.",
+    });
+  }
+  if (fieldSpecs.includes("warranty_check_note")) {
+    fields.push({
+      id: "warranty_check_note",
+      label: "Ghi chú điều kiện bảo hành (không bắt buộc)",
+      placeholder: "Ví dụ: Máy còn nguyên tem, không có dấu hiệu va đập hay vào nước",
+      defaultValue: t.warranty_check_note || "",
+    });
+  }
+
+  // 3. Sửa chữa & Kiểm tra sau sửa (REPAIRING -> COMPLETED)
   if (fieldSpecs.includes("repair_content")) {
     fields.push({
       id: "repair_content",
       label: "Nội dung đã kiểm tra / đã sửa chữa",
-      placeholder: "Ví dụ: Thay IC nguồn, vệ sinh tản nhiệt, chạy thử 2 giờ",
+      placeholder: "Ví dụ: Thay IC nguồn RT8205, vệ sinh tản nhiệt, chạy thử 2 giờ",
       defaultValue: t.repair && t.repair.content ? t.repair.content : "",
       required: true,
     });
@@ -3370,31 +4269,49 @@ function startTransition(targetStatus) {
       defaultValue: t.repair && t.repair.parts ? t.repair.parts : "",
     });
   }
-  if (fieldSpecs.includes("repair_note")) {
+  if (fieldSpecs.includes("repair_test_passed")) {
     fields.push({
-      id: "repair_note",
-      label: "Ghi chú kỹ thuật (không bắt buộc)",
-      placeholder: "Ví dụ: Máy chạy ổn định sau 2 giờ chạy thử",
-      defaultValue: "",
+      id: "repair_test_passed",
+      label: "Kết quả kiểm tra sau sửa",
+      options: [
+        { value: "true", label: "✔ Đạt yêu cầu (Máy hoạt động ổn định)" },
+        { value: "false", label: "✖ Chưa đạt yêu cầu" },
+      ],
+      defaultValue: t.repair_test_passed === false ? "false" : "true",
+      required: true,
+      hint: "Bắt buộc kiểm tra sau sửa đạt yêu cầu mới được xác nhận Hoàn tất.",
     });
   }
+  if (fieldSpecs.includes("repair_test_note")) {
+    fields.push({
+      id: "repair_test_note",
+      label: "Ghi chú kiểm tra sau sửa (không bắt buộc)",
+      placeholder: "Ví dụ: Đã test chạy thử 2 giờ, nhiệt độ ổn định",
+      defaultValue: t.repair_test_note || "",
+    });
+  }
+
+  // 4. Lý do từ chối (INSPECTING -> REJECTED)
+  if (fieldSpecs.includes("rejection_reason")) {
+    fields.push({
+      id: "rejection_reason",
+      label: "Lý do từ chối bảo hành (bắt buộc)",
+      placeholder: "Ví dụ: Thiết bị vào nước, chập cháy linh kiện, không thuộc phạm vi bảo hành",
+      required: true,
+    });
+  }
+
+  // 5. Bàn giao trả máy (COMPLETED / REJECTED -> RETURNED)
   if (fieldSpecs.includes("handover_note")) {
     fields.push({
       id: "handover_note",
-      label: "Thông tin bàn giao cho khách",
-      placeholder: "Ví dụ: Khách đã kiểm tra máy và nhận lại kèm phiếu bảo hành",
+      label: "Thông tin bàn giao trả máy cho khách (bắt buộc)",
+      placeholder: "Ví dụ: Khách đã kiểm tra máy, ký nhận bàn giao và nhận lại phiếu bảo hành",
       defaultValue: t.handover && t.handover.note ? t.handover.note : "",
       required: true,
     });
   }
-  if (fieldSpecs.includes("rejection_reason")) {
-    fields.push({
-      id: "rejection_reason",
-      label: "Lý do từ chối bảo hành",
-      placeholder: "Ví dụ: Thiết bị vào nước, không thuộc phạm vi bảo hành",
-      required: true,
-    });
-  }
+
   fields.push({
     id: "note",
     label: action.note_label || "Ghi chú xử lý (không bắt buộc)",
@@ -3427,10 +4344,29 @@ async function executeTransition(ticketId, targetStatus, values, changedBy) {
     changed_by: changedBy,
     note: values.note || `Chuyển sang ${(action && action.target_label) || statusLabel(targetStatus)}`,
   };
-  ["diagnosis_note", "repair_content", "repair_parts", "repair_note", "handover_note", "rejection_reason"].forEach((key) => {
+
+  // Chuẩn hóa kiểu dữ liệu
+  if (values.technician_id) payload.technician_id = parseInt(values.technician_id, 10);
+  if (values.error_category_id) payload.error_category_id = parseInt(values.error_category_id, 10);
+  if (values.is_warranty_eligible !== undefined && values.is_warranty_eligible !== "") {
+    payload.is_warranty_eligible = values.is_warranty_eligible === "true";
+  }
+  if (values.repair_test_passed !== undefined && values.repair_test_passed !== "") {
+    payload.repair_test_passed = values.repair_test_passed === "true";
+  }
+  [
+    "diagnosis_note",
+    "warranty_check_note",
+    "repair_content",
+    "repair_parts",
+    "repair_note",
+    "repair_test_note",
+    "rejection_reason",
+    "handover_note",
+    "rejection_proposal_note",
+  ].forEach((key) => {
     if (values[key]) payload[key] = values[key];
   });
-  if (values.error_category_id) payload.error_category_id = parseInt(values.error_category_id, 10);
 
   const res = await apiFetch(`/api/v1/warranty-tickets/${ticketId}/status`, { method: "PATCH", body: payload });
   if (!res.ok) {
@@ -3438,9 +4374,136 @@ async function executeTransition(ticketId, targetStatus, values, changedBy) {
     return;
   }
   showToast(`Đã chuyển phiếu sang trạng thái "${(action && action.target_label) || statusLabel(targetStatus)}".`, "success");
-  await openTicketModal(ticketId);
+  if (state.selectedTicket && state.selectedTicket.id === ticketId) {
+    await openTicketModal(ticketId);
+  }
   await loadTickets();
   await loadDashboard();
+}
+
+/** Mở modal phân công kỹ thuật viên phụ trách phiếu. */
+async function openAssignModal(ticketId) {
+  if (!isManager()) {
+    showToast("Chỉ Quản lý mới có quyền phân công hoặc phân công lại kỹ thuật viên.", "warning");
+    return;
+  }
+  let t = state.selectedTicket && state.selectedTicket.id === ticketId ? state.selectedTicket : null;
+  if (!t) {
+    t = (state.tickets || []).find((item) => item.id === ticketId);
+  }
+  if (!t) {
+    const res = await apiFetch(`/api/v1/warranty-tickets/${ticketId}`);
+    if (res.ok && res.data) t = res.data;
+  }
+  if (!t) {
+    showToast("Không tìm thấy thông tin phiếu bảo hành.", "warning");
+    return;
+  }
+  const assignableStatuses = ["RECEIVED", "INSPECTING", "REPAIRING"];
+  if (!assignableStatuses.includes(t.status)) {
+    showToast(
+      `Không thể phân công kỹ thuật viên cho phiếu ở trạng thái ${displayText(t.status_label || statusLabel(t.status))}. Chỉ phân công khi phiếu đang Tiếp nhận, Kiểm tra hoặc Sửa chữa.`,
+      "warning"
+    );
+    return;
+  }
+  if (!state.users || !state.users.length) {
+    await loadReferenceData();
+  }
+  const techUsers = (state.users || []).filter((u) => u.role === "TECHNICIAN");
+  if (!techUsers.length) {
+    showToast("Không có tài khoản kỹ thuật viên nào trong hệ thống.", "warning");
+    return;
+  }
+
+  const isReassign = Boolean(t.assigned_technician_id);
+  showActionModal({
+    title: isReassign ? "Phân công lại kỹ thuật viên" : "Phân công kỹ thuật viên",
+    message: `${ticketConfirmSummary(t)}<br><span class="text-xs text-slate-500">Chỉ định kỹ thuật viên chịu trách nhiệm kiểm tra và sửa chữa thiết bị này (Thẩm quyền của Quản lý).</span>`,
+    selectLabel: "Quản lý phân công",
+    selectOptions: staffSelectOptions("MANAGER").options,
+    selectDefault: staffSelectOptions("MANAGER").defaultId,
+    fields: [
+      {
+        id: "technician_id",
+        label: "Kỹ thuật viên phụ trách",
+        options: techUsers.map((u) => ({ value: u.id, label: `${displayText(u.full_name)} (${u.username})` })),
+        defaultValue: t.assigned_technician_id ? String(t.assigned_technician_id) : String(techUsers[0].id),
+        required: true,
+      },
+      {
+        id: "note",
+        label: "Ghi chú phân công",
+        placeholder: "Ví dụ: Khách cần lấy gấp trước chiều mai...",
+        defaultValue: "",
+      },
+    ],
+    confirmLabel: "Xác nhận phân công",
+    onConfirm: async ({ actorId, values }) => {
+      const techId = parseInt(values.technician_id, 10);
+      const res = await apiFetch(`/api/v1/warranty-tickets/${t.id}/assign`, {
+        method: "POST",
+        body: { technician_id: techId, note: values.note || null },
+      });
+      if (!res.ok) {
+        toastError(res, "Không phân công được kỹ thuật viên.");
+        return;
+      }
+      showToast("Đã phân công kỹ thuật viên phụ trách thành công.", "success");
+      if (state.selectedTicket && state.selectedTicket.id === t.id) {
+        await openTicketModal(t.id);
+      }
+      await loadTickets();
+      await loadDashboard();
+    },
+  });
+}
+
+/** Mở modal để KTV ghi đề xuất từ chối bảo hành. */
+async function openProposeRejectionModal(ticketId) {
+  let t = state.selectedTicket && state.selectedTicket.id === ticketId ? state.selectedTicket : null;
+  if (!t) {
+    t = (state.tickets || []).find((item) => item.id === ticketId);
+  }
+  if (!t) {
+    const res = await apiFetch(`/api/v1/warranty-tickets/${ticketId}`);
+    if (res.ok && res.data) t = res.data;
+  }
+  if (!t) return;
+
+  showActionModal({
+    title: "Đề xuất từ chối bảo hành",
+    message: `${ticketConfirmSummary(t)}<br><span class="text-xs text-slate-500">Ghi lại đề xuất và bằng chứng kiểm tra để Quản lý xem xét duyệt từ chối.</span>`,
+    selectLabel: "Kỹ thuật viên đề xuất",
+    selectOptions: staffSelectOptions("TECHNICIAN").options,
+    selectDefault: staffSelectOptions("TECHNICIAN").defaultId,
+    fields: [
+      {
+        id: "proposal_note",
+        label: "Lý do đề xuất & Bằng chứng kiểm tra (bắt buộc)",
+        placeholder: "Ví dụ: Mainboard bị rỉ sét do ngấm nước, tem bảo hành rách, có dấu hiệu sửa chữa bên ngoài...",
+        required: true,
+      },
+    ],
+    confirmLabel: "Gửi đề xuất",
+    danger: true,
+    onConfirm: async ({ actorId, values }) => {
+      const res = await apiFetch(`/api/v1/warranty-tickets/${t.id}/propose-rejection`, {
+        method: "POST",
+        body: { proposal_note: values.proposal_note },
+      });
+      if (!res.ok) {
+        toastError(res, "Không gửi được đề xuất từ chối.");
+        return;
+      }
+      showToast("Đã gửi đề xuất từ chối bảo hành cho Quản lý.", "success");
+      if (state.selectedTicket && state.selectedTicket.id === t.id) {
+        await openTicketModal(t.id);
+      }
+      await loadTickets();
+      await loadDashboard();
+    },
+  });
 }
 
 /** Ghi nhận CHẨN ĐOÁN của kỹ thuật viên mà không đổi trạng thái phiếu. */
@@ -3565,21 +4628,22 @@ async function saveRepair(ticketId, actorId, values) {
 function populateAiTicketSelect() {
   const sel = $("ai-ticket-select");
   if (!sel) return;
-  if (!state.tickets.length) {
-    sel.innerHTML = '<option value="">-- Chưa có phiếu bảo hành nào --</option>';
+  const activeTickets = state.tickets.filter((t) => !["COMPLETED", "REJECTED", "RETURNED"].includes(t.status));
+  if (!activeTickets.length) {
+    sel.innerHTML = '<option value="">-- Không có phiếu nào đang chờ xử lý lỗi --</option>';
     return;
   }
   const current = sel.value;
-  sel.innerHTML = state.tickets.map((t) => {
+  sel.innerHTML = activeTickets.map((t) => {
     const label = `${t.ticket_code} – ${t.serial_number || "không rõ số sê-ri"} (${statusLabel(t.status)})` +
       (t.error_category_id ? " – đã có loại lỗi" : " – chưa xác định loại lỗi");
     return `<option value="${t.id}">${escapeHtml(label)}</option>`;
   }).join("");
-  if (current && state.tickets.some((t) => String(t.id) === current)) {
+  if (current && activeTickets.some((t) => String(t.id) === current)) {
     sel.value = current;
   } else {
-    const firstUnlabeled = state.tickets.find((t) => !t.error_category_id);
-    sel.value = String((firstUnlabeled || state.tickets[0]).id);
+    const firstUnlabeled = activeTickets.find((t) => !t.error_category_id);
+    sel.value = String((firstUnlabeled || activeTickets[0]).id);
   }
 }
 
@@ -3637,9 +4701,9 @@ function normalizeAiResult(record) {
 }
 
 function confidenceColor(value) {
-  if (value > 0.7) return "text-emerald-300";
-  if (value > 0.4) return "text-amber-300";
-  return "text-rose-300";
+  if (value > 0.7) return "text-emerald-700 font-bold";
+  if (value > 0.4) return "text-amber-700 font-bold";
+  return "text-rose-700 font-bold";
 }
 
 /** Kết quả gợi ý có kèm loại lỗi nằm trong danh mục thật của hệ thống hay không. */
@@ -3676,30 +4740,30 @@ function renderAiResultBox(ticket) {
   const box = $("ai-result-box");
   if (!box) return;
   const hasLabel = ticket && ticket.error_category_id;
-  const currentLine = `<div class="pb-2 mb-2 border-b border-slate-800">
-      Loại lỗi đã ghi trên phiếu: <strong class="${hasLabel ? "text-emerald-300" : "text-amber-300"}">${escapeHtml(ticket ? categoryName(ticket.error_category_id) : "–")}</strong>
-      <span class="text-slate-500">(chỉ được ghi sau khi nhân viên xác nhận)</span>
+  const currentLine = `<div class="pb-2 mb-2 border-b border-slate-200 text-slate-700">
+      Loại lỗi đã ghi trên phiếu: <strong class="${hasLabel ? "text-emerald-700 font-bold" : "text-amber-700 font-bold"}">${escapeHtml(ticket ? categoryName(ticket.error_category_id) : "–")}</strong>
+      <span class="text-slate-500 text-xs font-normal">(chỉ được ghi sau khi kỹ thuật viên/quản lý xác nhận)</span>
     </div>`;
 
   const r = state.currentAiResult;
   if (!r) {
-    box.innerHTML = currentLine + '<div class="text-slate-400">Chưa có kết quả gợi ý cho phiếu này. Bấm "Gợi ý loại lỗi" để hệ thống đọc mô tả sự cố của khách.</div>';
+    box.innerHTML = currentLine + '<div class="text-slate-500">Chưa có kết quả gợi ý cho phiếu này. Bấm "Gợi ý loại lỗi" để hệ thống đọc mô tả sự cố của khách.</div>';
     return;
   }
 
   const needMore = r.need_more_information || [];
   const needMoreHtml = needMore.length
-    ? `<div class="mt-2 p-2 rounded-lg bg-amber-950/30 border border-amber-800/40 text-amber-100">
+    ? `<div class="mt-2 p-2.5 rounded-lg bg-amber-50 border border-amber-200 text-amber-900">
          <div class="font-semibold mb-1">Nên hỏi thêm khách hàng để xác định chính xác hơn:</div>
          <ul class="list-disc ml-4 space-y-0.5">${needMore.map((q) => `<li>${escapeHtml(humanizeText(q))}</li>`).join("")}</ul>
        </div>`
     : "";
 
   const statusClass = r.review_status === "APPROVED"
-    ? "bg-emerald-500/20 text-emerald-300 border border-emerald-500/40"
+    ? "bg-emerald-100 text-emerald-800 border border-emerald-300"
     : (r.review_status === "REJECTED"
-      ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
-      : "bg-slate-800 text-slate-300 border border-slate-700");
+      ? "bg-rose-100 text-rose-800 border border-rose-300"
+      : "bg-slate-100 text-slate-700 border border-slate-300");
 
   const footerNote = r.review_status === "PENDING"
     ? "Kết quả này chỉ là gợi ý. Chọn người xác nhận rồi bấm Xác nhận / Không dùng gợi ý."
@@ -3707,21 +4771,33 @@ function renderAiResultBox(ticket) {
 
   const canUseLabel = aiLabelIsUsable(r);
   const warning = (r.suggested_category_id !== null && r.suggested_category_id !== undefined && !canUseLabel)
-    ? '<div class="text-[11px] text-amber-300/90 mt-1">Kết quả gợi ý này không khớp danh mục loại lỗi nên hệ thống không ghi vào phiếu. Hãy bấm <strong>Gợi ý loại lỗi</strong> lại sau khi bổ sung mô tả lỗi.</div>'
+    ? '<div class="text-xs text-amber-800 font-medium mt-1">Kết quả gợi ý này không khớp danh mục loại lỗi nên hệ thống không ghi vào phiếu. Hãy bấm <strong>Gợi ý loại lỗi</strong> lại sau khi bổ sung mô tả lỗi.</div>'
     : "";
+
+  const isSim = r.provider === "mock" || r.provider === null;
+  const simBadge = isSim
+    ? '<span class="px-2 py-0.5 rounded text-xs font-semibold bg-amber-100 text-amber-800 border border-amber-200">Chế độ mô phỏng</span>'
+    : '<span class="px-2 py-0.5 rounded text-xs font-semibold bg-indigo-100 text-indigo-800 border border-indigo-200">Mô hình AI</span>';
+
+  const showConfidence = canUseLabel && r.confidence !== null && r.confidence !== undefined;
+  const confidenceLine = showConfidence
+    ? `<div class="text-slate-600">Mức độ chắc chắn: <strong class="font-mono ${confidenceColor(r.confidence)}">${confidencePercent(r.confidence)}</strong>
+         &bull; Thời điểm gợi ý: <span class="font-mono text-slate-700">${fmtDateTime(r.created_at)}</span></div>`
+    : `<div class="text-amber-800 text-xs font-medium">Chưa đủ thông tin để xác định nhóm lỗi hoặc độ chắc chắn.
+         &bull; Thời điểm: <span class="font-mono text-slate-700">${fmtDateTime(r.created_at)}</span></div>`;
 
   box.innerHTML = currentLine +
     `<div class="flex flex-wrap items-center gap-2">
-       <span class="text-slate-400">Loại lỗi được gợi ý:</span>
-       <strong class="${canUseLabel ? "text-fuchsia-300" : "text-amber-300"}">${escapeHtml(aiSuggestionText(r))}</strong>
-       <span class="px-2 py-0.5 rounded-full text-[10px] font-bold ${statusClass}">${escapeHtml(reviewLabel(r.review_status))}</span>
+       <span class="text-slate-600">Loại lỗi được gợi ý:</span>
+       <strong class="${canUseLabel ? "text-purple-700 font-bold" : "text-amber-800 font-bold"}">${escapeHtml(aiSuggestionText(r))}</strong>
+       ${simBadge}
+       <span class="px-2 py-0.5 rounded-full text-xs font-bold ${statusClass}">${escapeHtml(reviewLabel(r.review_status))}</span>
      </div>
-     <div class="text-slate-400">Mức độ chắc chắn: <strong class="font-mono ${confidenceColor(r.confidence)}">${confidencePercent(r.confidence)}</strong>
-       &bull; Thời điểm gợi ý: <span class="font-mono text-slate-300">${fmtDateTime(r.created_at)}</span></div>
-     <div class="text-slate-300"><span class="text-slate-400">Giải thích:</span> ${escapeHtml(aiReasonText(r))}</div>
+     ${confidenceLine}
+     <div class="text-slate-800"><span class="text-slate-600">Giải thích:</span> ${escapeHtml(aiReasonText(r))}</div>
      ${warning}
      ${needMoreHtml}
-     <div class="text-[11px] text-slate-500 mt-1">${footerNote}</div>`;
+     <div class="text-xs text-slate-500 mt-1">${footerNote}</div>`;
 }
 
 async function loadAiHistory(ticketId) {
@@ -3738,14 +4814,14 @@ async function loadAiHistory(ticketId) {
   }
   $("ai-history-body").innerHTML = items.map((rec) => {
     const n = normalizeAiResult(rec);
-    const labelCls = aiLabelIsUsable(n) ? "text-fuchsia-300" : "text-amber-300";
+    const labelCls = aiLabelIsUsable(n) ? "text-purple-700 font-semibold" : "text-amber-700 font-semibold";
     return `
     <tr class="table-row">
-      <td class="table-td text-slate-400 font-mono">${fmtDateTime(n.created_at)}</td>
+      <td class="table-td text-slate-600 font-mono">${fmtDateTime(n.created_at)}</td>
       <td class="table-td ${labelCls}">${escapeHtml(aiSuggestionText(n))}</td>
-      <td class="table-td font-mono">${confidencePercent(n.confidence)}</td>
+      <td class="table-td font-mono font-medium">${aiLabelIsUsable(n) ? confidencePercent(n.confidence) : "–"}</td>
       <td class="table-td">${escapeHtml(reviewLabel(n.review_status))}</td>
-      <td class="table-td text-slate-400">${rec.reviewed_by ? escapeHtml(userName(rec.reviewed_by)) : "–"}</td>
+      <td class="table-td text-slate-600">${rec.reviewed_by ? escapeHtml(userName(rec.reviewed_by)) : "–"}</td>
     </tr>`;
   }).join("");
 }
@@ -3772,7 +4848,8 @@ async function runAiClassify() {
   if (res.ok) {
     state.currentAiResult = normalizeFreshAiResult(res.data);
     const label = aiSuggestionText(state.currentAiResult);
-    showToast(`Đã gợi ý xong. Loại lỗi được gợi ý: <strong>${escapeHtml(label)}</strong> (mức độ chắc chắn ${confidencePercent(state.currentAiResult.confidence)}) – đang chờ nhân viên xác nhận.`, "success", 8000);
+    const confMsg = state.currentAiResult.suggested_category_id ? ` (mức độ chắc chắn ${confidencePercent(state.currentAiResult.confidence)})` : "";
+    showToast(`Đã gợi ý xong. Loại lỗi được gợi ý: <strong>${escapeHtml(label)}</strong>${confMsg} – đang chờ kỹ thuật viên xác nhận.`, "success", 8000);
     renderAiResultBox(state.tickets.find((t) => t.id === ticketId) || null);
     await loadAiHistory(ticketId);
     await loadTickets();
@@ -3788,7 +4865,7 @@ async function runAiClassify() {
 /** Nhân viên xác nhận hoặc không dùng kết quả gợi ý (human-in-the-loop). */
 async function submitAiReview(decision) {
   if (!hasPerm("ai.review")) {
-    showToast("Chỉ nhân viên tiếp nhận hoặc quản lý được xác nhận gợi ý loại lỗi.", "warning");
+    showToast("Chỉ kỹ thuật viên phụ trách hoặc quản lý được xác nhận gợi ý loại lỗi.", "warning");
     return;
   }
   if (!state.currentAiResult) {
@@ -3853,31 +4930,31 @@ async function refreshModalAiPanel(t) {
   const latest = items.length ? normalizeAiResult(items[0]) : null;
   if (summary) {
     if (!latest) {
-      summary.className = "px-2.5 py-1 text-[11px] rounded-full border border-slate-700 text-slate-400";
+      summary.className = "px-2.5 py-1 text-xs rounded-full border border-slate-300 text-slate-600 bg-slate-50";
       summary.textContent = "Chưa có gợi ý loại lỗi";
     } else if (latest.review_status === "APPROVED") {
-      summary.className = "px-2.5 py-1 text-[11px] rounded-full border border-emerald-600/50 bg-emerald-950/40 text-emerald-200";
+      summary.className = "px-2.5 py-1 text-xs rounded-full border border-emerald-300 bg-emerald-50 text-emerald-800 font-semibold";
       summary.textContent = "Đã xác nhận loại lỗi";
     } else if (latest.review_status === "REJECTED") {
-      summary.className = "px-2.5 py-1 text-[11px] rounded-full border border-rose-600/50 bg-rose-950/40 text-rose-200";
+      summary.className = "px-2.5 py-1 text-xs rounded-full border border-rose-300 bg-rose-50 text-rose-800 font-semibold";
       summary.textContent = "Không dùng gợi ý của hệ thống";
     } else {
-      summary.className = "px-2.5 py-1 text-[11px] rounded-full border border-amber-600/50 bg-amber-950/40 text-amber-200";
+      summary.className = "px-2.5 py-1 text-xs rounded-full border border-amber-300 bg-amber-50 text-amber-800 font-semibold";
       summary.textContent = "Gợi ý loại lỗi: chờ xác nhận";
     }
   }
 
-  let html = `<div class="mb-2">Loại lỗi đã ghi trên phiếu: <strong class="${t.error_category_id ? "text-emerald-300" : "text-amber-300"}">${escapeHtml(categoryName(t.error_category_id))}</strong></div>`;
+  let html = `<div class="mb-2 text-slate-700">Loại lỗi đã ghi trên phiếu: <strong class="${t.error_category_id ? "text-emerald-700 font-bold" : "text-amber-700 font-bold"}">${escapeHtml(categoryName(t.error_category_id))}</strong></div>`;
   if (!latest) {
-    html += `<div class="text-slate-400 mb-2">Chưa có kết quả gợi ý cho phiếu này.</div>`;
+    html += `<div class="text-slate-500 mb-2">Chưa có kết quả gợi ý cho phiếu này.</div>`;
   } else {
-    const statusCls = latest.review_status === "APPROVED" ? "text-emerald-300" : (latest.review_status === "REJECTED" ? "text-rose-300" : "text-amber-300");
-    const labelCls = aiLabelIsUsable(latest) ? "text-fuchsia-300" : "text-amber-300";
-    html += `<div class="mb-1">Loại lỗi được gợi ý: <strong class="${labelCls}">${escapeHtml(aiSuggestionText(latest))}</strong>
+    const statusCls = latest.review_status === "APPROVED" ? "text-emerald-700 font-semibold" : (latest.review_status === "REJECTED" ? "text-rose-700 font-semibold" : "text-amber-700 font-semibold");
+    const labelCls = aiLabelIsUsable(latest) ? "text-purple-700 font-bold" : "text-amber-700 font-bold";
+    html += `<div class="mb-1 text-slate-700">Loại lỗi được gợi ý: <strong class="${labelCls}">${escapeHtml(aiSuggestionText(latest))}</strong>
         &bull; Mức độ chắc chắn: <span class="font-mono ${confidenceColor(latest.confidence)}">${confidencePercent(latest.confidence)}</span></div>
-      <div class="text-slate-400">Trạng thái xác nhận: <strong class="${statusCls}">${escapeHtml(reviewLabel(latest.review_status))}</strong>
-        &bull; Thời điểm: <span class="font-mono">${fmtDateTime(latest.created_at)}</span></div>
-      <div class="text-slate-400 mt-1">Số lần đã gợi ý: <span class="font-mono text-slate-200">${items.length}</span></div>`;
+      <div class="text-slate-600">Trạng thái xác nhận: <strong class="${statusCls}">${escapeHtml(reviewLabel(latest.review_status))}</strong>
+        &bull; Thời điểm: <span class="font-mono text-slate-700">${fmtDateTime(latest.created_at)}</span></div>
+      <div class="text-slate-600 mt-1">Số lần đã gợi ý: <span class="font-mono font-medium text-slate-800">${items.length}</span></div>`;
   }
   const users = assignableStaff();
   const reviewerOptions = users
@@ -3902,14 +4979,14 @@ async function refreshModalAiPanel(t) {
         </div>
       </div>`;
   } else {
-    html += `<div class="text-[11px] text-slate-400 mt-3">Vai trò hiện tại chỉ xem được gợi ý loại lỗi; việc xác nhận do nhân viên tiếp nhận hoặc quản lý thực hiện.</div>`;
+    html += `<div class="text-xs text-slate-500 mt-3">Vai trò hiện tại chỉ xem được gợi ý loại lỗi; việc xác nhận do nhân viên tiếp nhận hoặc quản lý thực hiện.</div>`;
   }
   html += `
     <div class="flex flex-wrap gap-2 mt-2">
       ${canClassifyAi ? `<button class="btn btn-primary btn-sm" onclick="classifyCurrentTicket()"><i data-lucide="wand-2" class="w-3.5 h-3.5"></i> Gợi ý loại lỗi cho phiếu này</button>` : ""}
       <button class="btn btn-secondary btn-sm" onclick="goToAiTab()"><i data-lucide="arrow-up-right" class="w-3.5 h-3.5"></i> Xem đầy đủ ở màn hình xác định lỗi</button>
     </div>
-    ${canReviewAi && !canConfirm ? '<div class="text-[11px] text-amber-300/90 mt-2">Hai nút <strong>Xác nhận</strong> / <strong>Không dùng</strong> chỉ bật khi phiếu có kết quả gợi ý đang chờ duyệt — hãy bấm <strong>Gợi ý loại lỗi cho phiếu này</strong> trước.</div>' : ""}`;
+    ${canReviewAi && !canConfirm ? '<div class="text-xs text-amber-800 font-medium mt-2">Hai nút <strong>Xác nhận</strong> / <strong>Không dùng</strong> chỉ bật khi phiếu có kết quả gợi ý đang chờ duyệt — hãy bấm <strong>Gợi ý loại lỗi cho phiếu này</strong> trước.</div>' : ""}`;
   box.innerHTML = html;
   if ($("modal-ai-reviewer") && defaultReviewer) $("modal-ai-reviewer").value = String(defaultReviewer.id);
   refreshIcons();
@@ -3930,7 +5007,7 @@ function ticketCodeHtml(ticketId) {
 /** Xác nhận / không dùng gợi ý loại lỗi ngay trong chi tiết phiếu. */
 async function submitAiReviewModal(decision) {
   if (!hasPerm("ai.review")) {
-    showToast("Chỉ nhân viên tiếp nhận hoặc quản lý được xác nhận gợi ý loại lỗi.", "warning");
+    showToast("Chỉ kỹ thuật viên phụ trách hoặc quản lý được xác nhận gợi ý loại lỗi.", "warning");
     return;
   }
   if (!state.currentAiResult) {
@@ -3968,13 +5045,19 @@ async function submitAiReviewModal(decision) {
 async function classifyCurrentTicket() {
   const t = state.selectedTicket;
   if (!t) return;
+  if (["COMPLETED", "REJECTED", "RETURNED"].includes(t.status)) {
+    showToast("Phiếu đã ở trạng thái kết thúc, không thể tạo gợi ý loại lỗi.", "warning");
+    return;
+  }
   const res = await apiFetch(`/api/v1/ai/tickets/${t.id}/classify-error`, { method: "POST" });
   if (!res.ok) {
     toastError(res, "Không gợi ý được loại lỗi cho phiếu này.");
     return;
   }
-  const label = aiSuggestionText(normalizeFreshAiResult(res.data));
-  showToast(`Đã gợi ý xong. Loại lỗi được gợi ý: <strong>${escapeHtml(label)}</strong> (mức độ chắc chắn ${confidencePercent(res.data.confidence)}).`, "success", 8000);
+  const fresh = normalizeFreshAiResult(res.data);
+  const label = aiSuggestionText(fresh);
+  const confMsg = fresh.suggested_category_id ? ` (mức độ chắc chắn ${confidencePercent(res.data.confidence)})` : "";
+  showToast(`Đã gợi ý xong. Loại lỗi được gợi ý: <strong>${escapeHtml(label)}</strong>${confMsg}.`, "success", 8000);
   await openTicketModal(t.id);
   await loadTickets();
 }
@@ -4037,13 +5120,17 @@ function hasPerm(permission) {
   return user.permissions.indexOf(permission) !== -1;
 }
 
+const hasPermission = hasPerm;
+
 function isManager() {
   return !!state.session.user && state.session.user.role === "MANAGER";
 }
 
-/** Ẩn/hiện mọi phần tử có khai báo `data-perm` theo quyền của vai trò đang đăng nhập. */
+/** Ẩn/hiện mọi phần tử có khai báo `data-perm` theo quyền của vai trò đang đăng nhập.
+ * Lưu ý: KHÔNG áp dụng cho các nút menu chính trên sidebar (.nav-tab-btn)
+ * vì menu điều hướng sidebar do renderNavigation quyết định theo cấu hình vai trò. */
 function applyPermissions() {
-  document.querySelectorAll("[data-perm]").forEach((el) => {
+  document.querySelectorAll("[data-perm]:not(.nav-tab-btn)").forEach((el) => {
     el.style.display = hasPerm(el.getAttribute("data-perm")) ? "" : "none";
   });
 }
@@ -4056,46 +5143,117 @@ function applyPermissions() {
      - group "admin"     : quản trị tài khoản nhân viên (chỉ Quản lý)
    Giao diện chỉ VẼ LẠI danh sách đó; quyền vẫn do backend kiểm tra (403).
    ------------------------------------------------------------------ */
-function toggleNavMore() {
+function toggleNavMore(force) {
   const panel = $("nav-more-panel");
+  const toggleBtn = $("nav-more-toggle");
   if (!panel) return;
-  panel.classList.toggle("hidden");
+  const isCurrentlyHidden = panel.classList.contains("hidden");
+  const willOpen = force !== undefined ? force : isCurrentlyHidden;
+  panel.classList.toggle("hidden", !willOpen);
+  if (toggleBtn) {
+    toggleBtn.setAttribute("aria-expanded", willOpen ? "true" : "false");
+  }
 }
 
 function closeNavMore() {
-  const panel = $("nav-more-panel");
-  if (panel) panel.classList.add("hidden");
+  toggleNavMore(false);
 }
 
-/** Vẽ menu theo vai trò; nhóm "reference" được gom vào menu phụ "Tra cứu nội bộ". */
+/** Lấy danh sách tab hợp lệ theo vai trò của người dùng hiện tại */
+function getEffectiveAllowedTabs(user) {
+  if (!user) return ["dashboard"];
+  const role = user.role || "";
+  if (role === "TECHNICIAN") {
+    return ["dashboard", "tickets", "lookup", "ai"];
+  }
+  if (Array.isArray(user.menus) && user.menus.length > 0) {
+    return user.menus.map((m) => m.tab);
+  }
+  if (role === "RECEPTIONIST") {
+    return ["dashboard", "tickets", "lookup", "ai", "customers", "products", "devices"];
+  }
+  return ["dashboard", "tickets", "lookup", "ai", "customers", "products", "devices", "accounts"];
+}
+
+/** Vẽ menu theo vai trò; gom nhóm "reference" vào dropdown nếu có; ẩn nhóm rỗng & tiêu đề Sổ & Quản trị. */
 function renderNavigation(menus) {
-  const list = Array.isArray(menus) ? menus : [];
+  let list = Array.isArray(menus) ? menus : [];
+  const user = state.session.user;
+  const role = user ? user.role : "";
+
+  // BẢO VỆ TẠI NGUỒN GIAO DIỆN THEO VAI TRÒ:
+  // Nếu là Kỹ thuật viên (TECHNICIAN), menu hiển thị CHỈ ĐƯỢC PHÉP gồm đúng 4 mục:
+  // 1. Tổng quan, 2. Phiếu bảo hành, 3. Tra cứu bảo hành, 4. Hỗ trợ xác định lỗi.
+  // Tuyệt đối không giữ nhóm "reference" ("Tra cứu nội bộ") hay các mục danh mục sổ sách.
+  if (role === "TECHNICIAN") {
+    const TECH_ALLOWED_TABS = ["dashboard", "tickets", "lookup", "ai"];
+    list = list.filter((m) => TECH_ALLOWED_TABS.includes(m.tab) && m.group !== "reference");
+  }
+
   const moreWrap = $("nav-more");
   const morePanel = $("nav-more-panel");
+  const adminSection = $("nav-section-admin");
+  const adminNav = $("nav-section-admin-items") || (adminSection ? adminSection.querySelector("nav") : null);
+
+  // Phục hồi các nút đã từng được chuyển vào dropdown panel về lại container gốc
+  if (morePanel && adminNav) {
+    const movedBtns = Array.from(morePanel.querySelectorAll(".nav-tab-btn[data-tab]"));
+    movedBtns.forEach((btn) => {
+      if (moreWrap) {
+        adminNav.insertBefore(btn, moreWrap);
+      } else {
+        adminNav.appendChild(btn);
+      }
+    });
+    morePanel.innerHTML = "";
+  }
+
   const allowedTabs = list.map((menu) => menu.tab);
 
-  // 1. Mục menu không thuộc vai trò này -> ẩn (danh sách đã được backend lọc theo quyền)
-  document.querySelectorAll(".nav-tab-btn").forEach((btn) => {
+  // 1. Mục menu không thuộc vai trò này -> ẩn hoàn toàn (cả class hidden và inline style)
+  document.querySelectorAll(".nav-tab-btn[data-tab]").forEach((btn) => {
     const tab = btn.getAttribute("data-tab");
-    if (!tab) return; // nút "Tra cứu nội bộ" không gắn với màn hình nào
-    btn.classList.toggle("hidden", allowedTabs.indexOf(tab) === -1);
+    const isAllowed = allowedTabs.includes(tab);
+    btn.classList.toggle("hidden", !isAllowed);
+    btn.style.display = isAllowed ? "" : "none";
+    if (!isAllowed) {
+      btn.classList.remove("active");
+    }
   });
 
-  if (!moreWrap || !morePanel) return;
-  morePanel.innerHTML = "";
+  // 2. Gom nhóm reference vào dropdown "Tra cứu nội bộ" nếu có mục reference
   const reference = list.filter((menu) => menu.group === "reference");
-  moreWrap.classList.toggle("hidden", reference.length === 0);
+  if (moreWrap && morePanel) {
+    const hasReference = reference.length > 0;
+    moreWrap.classList.toggle("hidden", !hasReference);
+    moreWrap.style.display = hasReference ? "" : "none";
+    if (!hasReference) {
+      closeNavMore();
+    } else {
+      reference.forEach((menu) => {
+        const btn = document.querySelector(`nav .nav-tab-btn[data-tab="${menu.tab}"]`);
+        if (!btn) return;
+        btn.classList.remove("hidden");
+        btn.style.display = "";
+        btn.setAttribute("title", menu.hint || menu.label);
+        morePanel.appendChild(btn);
+      });
+    }
+  }
 
-  // 2. Mục nhóm "reference" -> chuyển vào menu phụ (vẫn dùng đúng nút gốc nên giữ nguyên sự kiện)
-  reference.forEach((menu) => {
-    const btn = document.querySelector(`nav .nav-tab-btn[data-tab="${menu.tab}"]`);
-    if (!btn) return;
-    btn.classList.remove("hidden");
-    btn.setAttribute("title", menu.hint || menu.label);
-    morePanel.appendChild(btn);
-  });
+  // 3. Ẩn tiêu đề "Sổ & Quản trị" và cả khối section nếu không còn mục nào hiển thị bên dưới
+  if (adminSection) {
+    const visibleAdminItems = adminSection.querySelectorAll(
+      ".nav-tab-btn[data-tab]:not(.hidden), #nav-more:not(.hidden)"
+    );
+    const hasVisible = visibleAdminItems.length > 0 && Array.from(visibleAdminItems).some(
+      (el) => el.style.display !== "none"
+    );
+    adminSection.classList.toggle("hidden", !hasVisible);
+    adminSection.style.display = hasVisible ? "" : "none";
+  }
 
-  // 3. Màn hình nhỏ: chèn nhãn nhóm trước mục tra cứu nội bộ để nhân viên biết đây là nhóm phụ
+  // 4. Màn hình nhỏ (nếu có): nhãn nhóm
   const mobileNav = document.querySelector(".nav-tab-mobile");
   if (mobileNav) {
     const oldLabel = mobileNav.querySelector(".nav-group-label");
@@ -4114,10 +5272,11 @@ function renderNavigation(menus) {
   refreshIcons();
 }
 
-/** Tab mặc định nên mở: tab đầu tiên mà vai trò hiện tại được phép xem. */
+/** Tab mặc định nên mở: tab đầu tiên trong menu mà vai trò hiện tại được phép xem. */
 function firstAllowedTab() {
-  const order = ["dashboard", "tickets", "lookup", "ai", "customers", "products", "devices", "accounts"];
-  return order.find((tab) => hasPerm(TAB_PERMISSIONS[tab])) || "dashboard";
+  const user = state.session && state.session.user;
+  const allowed = getEffectiveAllowedTabs(user);
+  return allowed[0] || "dashboard";
 }
 
 /** Cập nhật thẻ phiên làm việc trên thanh điều hướng + áp quyền cho toàn bộ giao diện. */
@@ -4130,8 +5289,16 @@ function applySessionUi() {
     if (chip) chip.style.display = "flex";
     // Menu do BACKEND trả về theo vai trò (nhóm "work" / "reference" / "admin")
     renderNavigation(user.menus);
-  } else if (chip) {
-    chip.style.display = "none";
+
+    // NẾU TAB HIỆN TẠI KHÔNG CÒN TRONG MENU CỦA VAI TRÒ NÀY -> CHUYỂN VỀ TỔNG QUAN
+    const allowed = getEffectiveAllowedTabs(user);
+    if (!allowed.includes(state.currentTab)) {
+      switchTab("dashboard");
+    }
+  } else {
+    if (chip) chip.style.display = "none";
+    renderNavigation([]);
+    switchTab("dashboard");
   }
   applyPermissions();
 }
@@ -4159,7 +5326,7 @@ function defaultActor(staff, preferredRole = "RECEPTIONIST") {
 function staffCanReview(user) {
   if (!user) return false;
   if (typeof user.can_review === "boolean") return user.can_review;
-  return user.role === "MANAGER" || user.role === "RECEPTIONIST";
+  return user.role === "MANAGER" || user.role === "TECHNICIAN";
 }
 
 function setLoginMessage(text, type = "error") {
@@ -4167,9 +5334,9 @@ function setLoginMessage(text, type = "error") {
   if (!box) return;
   box.textContent = text || "";
   box.className = text
-    ? "text-xs rounded-xl px-3 py-2 border " + (type === "success"
-        ? "border-emerald-600/50 bg-emerald-950/40 text-emerald-200"
-        : "border-rose-600/50 bg-rose-950/40 text-rose-200")
+    ? "text-sm rounded-xl px-3 py-2 border font-medium " + (type === "success"
+        ? "border-emerald-300 bg-emerald-50 text-emerald-800"
+        : "border-rose-300 bg-rose-50 text-rose-800")
     : "hidden";
 }
 
@@ -4187,7 +5354,12 @@ async function enterWorkspace() {
   applySessionUi();
   setAuthState("authed");
   await loadWorkspaceData();
-  const tab = hasPerm(TAB_PERMISSIONS[state.currentTab]) ? state.currentTab : firstAllowedTab();
+  const user = state.session.user;
+  const allowed = getEffectiveAllowedTabs(user);
+  let tab = state.currentTab;
+  if (!allowed.includes(tab) || !hasPerm(TAB_PERMISSIONS[tab])) {
+    tab = firstAllowedTab();
+  }
   switchTab(tab);
   refreshIcons();
 }
@@ -4196,7 +5368,7 @@ async function enterWorkspace() {
 async function submitLogin(event) {
   if (event) event.preventDefault();
   const username = ($("login-username").value || "").trim();
-  const password = $("login-password").value || "";
+  const password = ($("login-password").value || "").trim();
   const btn = $("login-submit");
   if (!username || !password) {
     setLoginMessage("Vui lòng nhập tên đăng nhập và mật khẩu.");
@@ -4226,6 +5398,7 @@ async function submitLogin(event) {
     return;
   }
 
+  clearSessionData();
   state.session.token = res.data.access_token;
   state.session.user = res.data.user || null;
   storeToken(state.session.token);
@@ -4249,14 +5422,34 @@ async function restoreSession() {
   return true;
 }
 
+function clearSessionData() {
+  window.BaoHanhSupport?.reset();
+  state.sessionEpoch++;
+  state.selectedTicket = null;
+  state.currentAiResult = null;
+  state.workboard = null;
+  state.tickets = [];
+  state.customers = [];
+  state.products = [];
+  state.devices = [];
+  state.users = [];
+  state.dashActiveRows = [];
+  state.dashAttention = [];
+  state.dashView = null;
+  state.dashFilterStatus = "ALL";
+  state.dashSearchQuery = "";
+  state.currentTab = "dashboard";
+  setTableMessage("dash-active-body", 7, "Đang tải dữ liệu...");
+  setTableMessage("tickets-table-body", 8, "Đang tải dữ liệu...");
+}
+
 /** Token hết hạn/bị thu hồi giữa phiên làm việc -> quay về màn hình đăng nhập. */
 function handleSessionExpired() {
   if (!state.session.token) return;
   state.session.token = "";
   state.session.user = null;
   clearStoredToken();
-  state.selectedTicket = null;
-  state.currentAiResult = null;
+  clearSessionData();
   applySessionUi();
   setAuthState("guest");
   setLoginMessage("Phiên làm việc đã hết hạn. Vui lòng đăng nhập lại.");
@@ -4270,8 +5463,7 @@ async function logout() {
   state.session.token = "";
   state.session.user = null;
   clearStoredToken();
-  state.selectedTicket = null;
-  state.currentAiResult = null;
+  clearSessionData();
   applySessionUi();
   setAuthState("guest");
   $("login-password").value = "";
@@ -4291,39 +5483,403 @@ async function logout() {
  * Không hiển thị mật khẩu/hash; dữ liệu lấy từ `GET /api/v1/users`.
  */
 async function loadAccounts() {
-  const res = await apiFetch("/api/v1/users/");
+  setTableLoading("accounts-table-body", 8);
+  const res = await apiFetch("/api/v1/users");
   if (!res.ok) {
     if (res.status === 403) {
-      setTableMessage("accounts-table-body", 7, "Chỉ Quản lý xem được danh sách tài khoản nhân viên.");
+      setTableMessage("accounts-table-body", 8, "Chỉ Quản lý xem được danh sách tài khoản nhân viên.");
     } else {
-      setTableMessage("accounts-table-body", 7, escapeHtml(errorMessage(res.status, res.data)));
+      setTableMessage("accounts-table-body", 8, `Lỗi tải danh sách tài khoản: ${escapeHtml(errorMessage(res.status, res.data))}`);
     }
+    const badge = $("account-count-badge");
+    if (badge) badge.textContent = "";
     return;
   }
   const payload = res.data || {};
   const rows = Array.isArray(payload) ? payload : Array.isArray(payload.items) ? payload.items : [];
-  if (!rows.length) {
-    setTableMessage("accounts-table-body", 7, "Hệ thống chưa có tài khoản nhân viên nào.");
+  state.accounts = rows;
+  filterAccounts();
+}
+
+/** Lọc và hiển thị danh sách tài khoản theo từ khóa, vai trò và trạng thái. */
+function filterAccounts() {
+  const allRows = state.accounts || [];
+  const searchInput = $("account-search-input");
+  const roleSelect = $("account-role-filter");
+  const statusSelect = $("account-status-filter");
+  const badge = $("account-count-badge");
+
+  const query = (searchInput ? searchInput.value : "").trim().toLowerCase();
+  const roleFilter = roleSelect ? roleSelect.value : "ALL";
+  const statusFilter = statusSelect ? statusSelect.value : "ALL";
+
+  if (!allRows.length) {
+    setTableMessage("accounts-table-body", 8, "Hệ thống chưa có tài khoản nhân viên nào.");
+    if (badge) badge.textContent = "0 tài khoản";
     return;
   }
+
+  const filtered = allRows.filter((u) => {
+    if (roleFilter !== "ALL" && u.role !== roleFilter) return false;
+    const active = u.active !== false;
+    if (statusFilter === "ACTIVE" && !active) return false;
+    if (statusFilter === "LOCKED" && active) return false;
+    if (query) {
+      const uname = (u.username || "").toLowerCase();
+      const fname = (u.full_name || "").toLowerCase();
+      const email = (u.email || "").toLowerCase();
+      const phone = (u.phone || "").toLowerCase();
+      if (!uname.includes(query) && !fname.includes(query) && !email.includes(query) && !phone.includes(query)) {
+        return false;
+      }
+    }
+    return true;
+  });
+
+  if (badge) {
+    badge.textContent = `Hiển thị ${filtered.length}/${allRows.length} tài khoản`;
+  }
+
+  if (!filtered.length) {
+    setTableMessage("accounts-table-body", 8, "Không tìm thấy tài khoản nào phù hợp với bộ lọc.");
+    return;
+  }
+
+  const canManage = hasPerm("user.manage");
+  const currentUserId = state.session.user ? state.session.user.id : null;
   const tbody = $("accounts-table-body");
-  tbody.innerHTML = rows
+  if (!tbody) return;
+
+  tbody.innerHTML = filtered
     .map((u) => {
       const active = u.active !== false;
+      let actionBtn = "";
+      if (canManage) {
+        if (Number(u.id) === Number(currentUserId)) {
+          actionBtn = '<span class="text-xs text-slate-400 italic">Đang đăng nhập</span>';
+        } else if (active) {
+          actionBtn = `<button type="button" class="btn btn-secondary btn-xs text-rose-600 border-rose-200 hover:bg-rose-50" onclick="toggleUserActive(${u.id}, false)"><i data-lucide="lock" class="w-3 h-3"></i> Khoá</button>`;
+        } else {
+          actionBtn = `<button type="button" class="btn btn-secondary btn-xs text-emerald-600 border-emerald-200 hover:bg-emerald-50" onclick="toggleUserActive(${u.id}, true)"><i data-lucide="unlock" class="w-3 h-3"></i> Mở khoá</button>`;
+        }
+      }
       return `<tr class="table-row">
-        <td class="table-td font-mono text-xs">${escapeHtml(u.username)}</td>
+        <td class="table-td font-mono text-xs font-semibold">${escapeHtml(u.username)}</td>
         <td class="table-td font-medium">${escapeHtml(displayText(u.full_name))}</td>
         <td class="table-td">${escapeHtml(roleLabel(u.role))}</td>
         <td class="table-td">${escapeHtml(displayText(u.email))}</td>
         <td class="table-td font-mono text-xs">${escapeHtml(displayText(u.phone))}</td>
         <td class="table-td">${u.service_center_id === null || u.service_center_id === undefined ? "Toàn hệ thống" : "Trung tâm #" + escapeHtml(u.service_center_id)}</td>
         <td class="table-td">${active
-          ? '<span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-950/60 text-emerald-200 border border-emerald-800/60">Đang làm việc</span>'
-          : '<span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-950/60 text-rose-200 border border-rose-800/60">Đã khoá</span>'}</td>
+          ? '<span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-emerald-100 text-emerald-800 border border-emerald-300">Đang làm việc</span>'
+          : '<span class="px-2.5 py-1 text-xs font-semibold rounded-full bg-rose-100 text-rose-800 border border-rose-300">Đã khoá</span>'}</td>
+        <td class="table-td text-right">${actionBtn}</td>
       </tr>`;
     })
     .join("");
   refreshIcons();
+}
+
+/** Quản lý: Khoá / Mở khoá tài khoản nhân viên */
+async function toggleUserActive(userId, active) {
+  const actionText = active ? "mở khoá" : "khoá";
+  const ok = confirm(`Bạn có chắc chắn muốn ${actionText} tài khoản này?`);
+  if (!ok) return;
+
+  const res = await apiFetch(`/api/v1/users/${userId}`, {
+    method: "PATCH",
+    body: { active: active },
+  });
+  if (!res.ok) {
+    toastError(res, `Không thể ${actionText} tài khoản.`);
+    return;
+  }
+  showToast(`Đã ${actionText} tài khoản thành công.`, "success");
+  await loadAccounts();
+}
+
+/** Quản lý xét duyệt đề xuất từ chối của KTV: APPROVED hoặc DECLINED */
+async function reviewRejectionProposal(ticketId, decision) {
+  const isApprove = decision === "APPROVED";
+  const actionText = isApprove ? "duyệt từ chối" : "không đồng ý từ chối";
+  const promptMessage = isApprove
+    ? "Xác nhận DUYỆT từ chối bảo hành theo đề xuất của KTV.\nPhiếu sẽ chuyển sang trạng thái TỪ CHỐI (REJECTED).\nNhập lý do/ghi chú duyệt:"
+    : "Xác nhận KHÔNG ĐỒNG Ý từ chối bảo hành.\nPhiếu sẽ giữ ở bước Đang kiểm tra (INSPECTING) để KTV tiếp tục xử lý.\nNhập chỉ đạo/lý do cho KTV:";
+
+  const noteInput = prompt(promptMessage, isApprove ? "Đã duyệt đề xuất từ chối bảo hành." : "Không đồng ý từ chối, yêu cầu tiếp tục xử lý.");
+  if (noteInput === null) return; // Người dùng ấn Hủy
+
+  const res = await apiFetch(`/api/v1/warranty-tickets/${ticketId}/review-rejection-proposal`, {
+    method: "POST",
+    body: {
+      decision: decision,
+      note: noteInput.trim() || (isApprove ? "Đã duyệt đề xuất từ chối bảo hành." : "Không đồng ý từ chối, yêu cầu tiếp tục xử lý."),
+    },
+  });
+
+  if (!res.ok) {
+    toastError(res, `Không thể ${actionText}.`);
+    return;
+  }
+
+  showToast(isApprove ? "Đã duyệt từ chối bảo hành thành công." : "Đã từ chối đề xuất, yêu cầu KTV tiếp tục xử lý.", "success");
+  await openTicketModal(ticketId);
+  await loadTickets();
+  await loadDashboard();
+}
+
+/** Quản lý: Mở modal thêm tài khoản mới */
+function openAddUserModal() {
+  const form = $("user-form");
+  if (form) form.reset();
+  clearFieldErrors(["usr-username", "usr-password", "usr-fullname"]);
+  openModal("user-modal");
+}
+
+/** Quản lý: Submit thêm tài khoản mới */
+async function submitUserForm(e) {
+  e.preventDefault();
+  const submitBtn = e.target ? e.target.querySelector("button[type=submit]") : null;
+  const username = ($("usr-username").value || "").trim();
+  const password = $("usr-password").value || "";
+  const fullName = ($("usr-fullname").value || "").trim();
+  const role = $("usr-role").value;
+  const phone = ($("usr-phone").value || "").trim() || null;
+  const email = ($("usr-email").value || "").trim() || null;
+
+  clearFieldErrors(["usr-username", "usr-password", "usr-fullname"]);
+  let hasError = false;
+  if (!username) { setFieldError("usr-username", "Vui lòng nhập tên đăng nhập."); hasError = true; }
+  if (!password) { setFieldError("usr-password", "Vui lòng nhập mật khẩu."); hasError = true; }
+  else if (password.length < 6) { setFieldError("usr-password", "Mật khẩu phải có tối thiểu 6 ký tự."); hasError = true; }
+  if (!fullName) { setFieldError("usr-fullname", "Vui lòng nhập họ và tên."); hasError = true; }
+
+  if (hasError) return;
+
+  if (submitBtn) submitBtn.disabled = true;
+  try {
+    const res = await apiFetch("/api/v1/users/", {
+      method: "POST",
+      body: {
+        username: username,
+        password: password,
+        full_name: fullName,
+        role: role,
+        phone: phone,
+        email: email,
+        service_center_id: 1,
+        active: true,
+      },
+    });
+    if (!res.ok) {
+      toastError(res, "Không thể tạo tài khoản.");
+      return;
+    }
+    showToast(`Đã tạo tài khoản <strong>${escapeHtml(username)}</strong> thành công.`, "success");
+    closeModal("user-modal");
+    await loadAccounts();
+  } finally {
+    if (submitBtn) submitBtn.disabled = false;
+  }
+}
+
+/** AI Chức năng 1: Gợi ý loại lỗi trong màn hình Tiếp nhận máy */
+async function wizardSuggestCategory() {
+  const descEl = $("wiz-desc");
+  const desc = (descEl ? descEl.value : "").trim();
+  if (desc.length < 3) {
+    showToast("Vui lòng nhập mô tả lỗi (tối thiểu 3 ký tự) để AI gợi ý nhóm lỗi.", "warning");
+    if (descEl) descEl.focus();
+    return;
+  }
+  const btn = $("btn-wiz-ai-suggest");
+  const hintBox = $("wiz-ai-hint");
+  const hintText = $("wiz-ai-hint-text");
+  if (btn) btn.disabled = true;
+  if (hintBox) hintBox.classList.remove("hidden");
+  if (hintText) hintText.innerHTML = '<span class="flex items-center gap-1.5"><i data-lucide="loader" class="w-3.5 h-3.5 animate-spin"></i> Đang phân tích mô tả lỗi...</span>';
+  refreshIcons();
+
+  let prodName = "";
+  if (state.wizardDevice && state.wizardDevice.product_name) {
+    prodName = state.wizardDevice.product_name;
+  } else if ($("wiz-product-name") && $("wiz-product-name").value) {
+    prodName = $("wiz-product-name").value.trim();
+  }
+
+  const res = await apiFetch("/api/v1/ai/suggest-category", {
+    method: "POST",
+    body: {
+      product_name: prodName,
+      issue_description: desc,
+    },
+  });
+  if (btn) btn.disabled = false;
+
+  if (!res.ok) {
+    if (hintBox) hintBox.classList.add("hidden");
+    toastError(res, "Không thể gợi ý loại lỗi.");
+    return;
+  }
+
+  const d = res.data || {};
+  const pInfo = d.provider_info || {};
+  const simBadge = pInfo.simulation_label ? `<span class="badge-simulation ml-1 text-[11px] px-1.5 py-0.5 rounded bg-slate-200 text-slate-700 font-semibold">${escapeHtml(pInfo.simulation_label)}</span>` : "";
+
+  if (d.suggested_category_id && $("wiz-category-select")) {
+    $("wiz-category-select").value = String(d.suggested_category_id);
+  }
+
+  if (hintText) {
+    const catName = d.suggested_category_name ? `<strong>${escapeHtml(d.suggested_category_name)}</strong>` : "Chưa xác định nhóm cụ thể";
+    hintText.innerHTML = `${catName} (Độ tin cậy: ${confidencePercent(d.confidence)}) ${simBadge} &ndash; ${escapeHtml(d.reason || "")}`;
+  }
+  refreshIcons();
+}
+
+/** AI Chức năng 2: Tóm tắt lịch sử bảo hành theo phiếu */
+async function showTicketAiHistory(ticketId = null) {
+  const tid = ticketId || (state.selectedTicket ? state.selectedTicket.id : null);
+  if (!tid) return;
+  openModal("ai-summary-modal");
+  const content = $("ai-summary-content");
+  if (content) content.innerHTML = '<div class="flex items-center gap-2 text-purple-700 py-3"><i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Đang tổng hợp lịch sử bảo hành...</div>';
+  refreshIcons();
+
+  const res = await apiFetch(`/api/v1/ai/tickets/${tid}/summarize-history`, { method: "POST" });
+  if (!res.ok) {
+    if (content) content.innerHTML = `<span class="text-rose-600">${escapeHtml(errorMessage(res.status, res.data))}</span>`;
+    return;
+  }
+  const d = res.data || {};
+  const pInfo = d.provider_info || {};
+  const simBadge = pInfo.simulation_label ? `<span class="badge-simulation text-[11px] px-2 py-0.5 rounded bg-slate-200 text-slate-700 font-semibold">${escapeHtml(pInfo.simulation_label)}</span>` : "";
+  let repeatBadge = "";
+  if (d.is_repeated_fault) {
+    repeatBadge = '<div class="p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 font-semibold text-xs flex items-center gap-1.5 mb-2"><i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600"></i> Cảnh báo: Thiết bị có dấu hiệu lỗi lặp lại nhiều lần.</div>';
+  }
+  let catsHtml = "";
+  if (Array.isArray(d.fault_categories) && d.fault_categories.length) {
+    catsHtml = `<div><strong>Các nhóm lỗi đã ghi nhận:</strong> ${escapeHtml(d.fault_categories.join(", "))}</div>`;
+  }
+  let partsHtml = "";
+  if (Array.isArray(d.repair_parts) && d.repair_parts.length) {
+    partsHtml = `<div><strong>Linh kiện từng thay thế:</strong> ${escapeHtml(d.repair_parts.join(", "))}</div>`;
+  }
+
+  if (content) {
+    content.innerHTML = `
+      <div class="flex items-center justify-between mb-2 pb-2 border-b border-slate-200">
+        <span class="text-xs text-slate-500 font-semibold uppercase tracking-wider">Tóm tắt lịch sử bảo hành</span>
+        ${simBadge}
+      </div>
+      ${repeatBadge}
+      <div class="text-slate-900 font-medium leading-relaxed">${escapeHtml(d.summary || "Chưa có thông tin.")}</div>
+      ${d.recommendation ? `<div class="mt-2.5 p-2.5 rounded-lg bg-indigo-50/60 border border-indigo-100 text-xs text-indigo-900"><strong>Khuyến nghị:</strong> ${escapeHtml(d.recommendation)}</div>` : ""}
+      <div class="pt-3 mt-3 border-t border-slate-200 text-xs text-slate-600 space-y-1">
+        <div><strong>Tổng số lần gửi bảo hành:</strong> ${d.total_tickets || d.ticket_count || 1} lần</div>
+        ${catsHtml}
+        ${partsHtml}
+      </div>
+    `;
+    refreshIcons();
+  }
+}
+
+/** AI Chức năng 2: Tóm tắt lịch sử bảo hành theo thiết bị */
+async function showDeviceAiHistory(deviceId = null) {
+  const did = deviceId || state.selectedDeviceId || (state.selectedDevice ? state.selectedDevice.id : null);
+  if (!did) return;
+  openModal("ai-summary-modal");
+  const content = $("ai-summary-content");
+  if (content) content.innerHTML = '<div class="flex items-center gap-2 text-purple-700 py-3"><i data-lucide="loader" class="w-4 h-4 animate-spin"></i> Đang tổng hợp lịch sử bảo hành...</div>';
+  refreshIcons();
+
+  const res = await apiFetch(`/api/v1/ai/devices/${did}/summarize-history`, { method: "POST" });
+  if (!res.ok) {
+    if (content) content.innerHTML = `<span class="text-rose-600">${escapeHtml(errorMessage(res.status, res.data))}</span>`;
+    return;
+  }
+  const d = res.data || {};
+  const pInfo = d.provider_info || {};
+  const simBadge = pInfo.simulation_label ? `<span class="badge-simulation text-[11px] px-2 py-0.5 rounded bg-slate-200 text-slate-700 font-semibold">${escapeHtml(pInfo.simulation_label)}</span>` : "";
+  let repeatBadge = "";
+  if (d.is_repeated_fault) {
+    repeatBadge = '<div class="p-2.5 rounded-lg bg-amber-50 border border-amber-300 text-amber-900 font-semibold text-xs flex items-center gap-1.5 mb-2"><i data-lucide="alert-triangle" class="w-4 h-4 text-amber-600"></i> Cảnh báo: Thiết bị có dấu hiệu lỗi lặp lại nhiều lần.</div>';
+  }
+  let catsHtml = "";
+  if (Array.isArray(d.fault_categories) && d.fault_categories.length) {
+    catsHtml = `<div><strong>Các nhóm lỗi đã ghi nhận:</strong> ${escapeHtml(d.fault_categories.join(", "))}</div>`;
+  }
+  let partsHtml = "";
+  if (Array.isArray(d.repair_parts) && d.repair_parts.length) {
+    partsHtml = `<div><strong>Linh kiện từng thay thế:</strong> ${escapeHtml(d.repair_parts.join(", "))}</div>`;
+  }
+
+  if (content) {
+    content.innerHTML = `
+      <div class="flex items-center justify-between mb-2 pb-2 border-b border-slate-200">
+        <span class="text-xs text-slate-500 font-semibold uppercase tracking-wider">Tóm tắt lịch sử bảo hành</span>
+        ${simBadge}
+      </div>
+      ${repeatBadge}
+      <div class="text-slate-900 font-medium leading-relaxed">${escapeHtml(d.summary || "Chưa có thông tin.")}</div>
+      ${d.recommendation ? `<div class="mt-2.5 p-2.5 rounded-lg bg-indigo-50/60 border border-indigo-100 text-xs text-indigo-900"><strong>Khuyến nghị:</strong> ${escapeHtml(d.recommendation)}</div>` : ""}
+      <div class="pt-3 mt-3 border-t border-slate-200 text-xs text-slate-600 space-y-1">
+        <div><strong>Tổng số lần gửi bảo hành:</strong> ${d.total_tickets || d.ticket_count || 1} lần</div>
+        ${catsHtml}
+        ${partsHtml}
+      </div>
+    `;
+    refreshIcons();
+  }
+}
+
+/** AI Chức năng 3: Soạn tin cập nhật tiến độ cho nhân viên xem, sửa và sao chép */
+async function showTicketAiNotification(ticketId = null) {
+  const tid = ticketId || (state.selectedTicket ? state.selectedTicket.id : null);
+  if (!tid) return;
+  openModal("ai-notification-modal");
+  const area = $("ai-noti-textarea");
+  const recipient = $("ai-noti-recipient");
+  const statusEl = $("ai-noti-copy-status");
+  if (statusEl) statusEl.textContent = "";
+  if (area) area.value = "Đang soạn nội dung tin nhắn cập nhật tiến độ...";
+
+  const t = state.selectedTicket;
+  if (recipient) {
+    const custName = t && t.customer ? t.customer.full_name : (t ? t.customer_name : "");
+    const custPhone = t && t.customer ? t.customer.phone : (t ? t.customer_phone : "");
+    recipient.textContent = `${displayText(custName)} (${custPhone || "Không có SĐT"})`;
+  }
+
+  const res = await apiFetch(`/api/v1/ai/tickets/${tid}/draft-progress-notification`, { method: "POST" });
+  if (!res.ok) {
+    if (area) area.value = "Không thể tạo nội dung tin nhắn: " + errorMessage(res.status, res.data);
+    return;
+  }
+  const d = res.data || {};
+  const pInfo = d.provider_info || {};
+  const simBadge = pInfo.simulation_label ? `<span class="badge-simulation text-[11px] px-2 py-0.5 rounded bg-slate-200 text-slate-700 font-semibold">${escapeHtml(pInfo.simulation_label)}</span>` : "";
+  if (statusEl) statusEl.innerHTML = simBadge;
+  if (area) area.value = d.draft_message || d.suggested_message || "";
+}
+
+/** Sao chép nội dung tin nhắn tiến độ vào clipboard */
+async function copyNotificationText() {
+  const area = $("ai-noti-textarea");
+  const statusEl = $("ai-noti-copy-status");
+  if (!area || !area.value.trim()) return;
+  try {
+    await navigator.clipboard.writeText(area.value.trim());
+    if (statusEl) statusEl.textContent = "✔ Đã sao chép tin nhắn vào bộ nhớ tạm!";
+    showToast("Đã sao chép tin nhắn thông báo vào bộ nhớ tạm.", "success");
+  } catch (err) {
+    area.select();
+    document.execCommand("copy");
+    if (statusEl) statusEl.textContent = "✔ Đã sao chép tin nhắn!";
+    showToast("Đã sao chép tin nhắn.", "success");
+  }
 }
 
 /* --------------------------- KHỞI TẠO --------------------------- */
@@ -4335,6 +5891,8 @@ function bindEvents() {
   $("customer-form").addEventListener("submit", submitCustomerForm);
   $("product-form").addEventListener("submit", submitProductForm);
   $("device-form").addEventListener("submit", submitDeviceForm);
+  const userForm = $("user-form");
+  if (userForm) userForm.addEventListener("submit", submitUserForm);
   $("action-modal-confirm").addEventListener("click", confirmActionModal);
 
   // Wizard "Tiếp nhận máy mới": tra số sê-ri + tính trước hạn bảo hành
@@ -4386,6 +5944,20 @@ function setupAuthEvents() {
     form.addEventListener("submit", submitLogin);
     form.addEventListener("input", () => setLoginMessage(""));
   }
+  // Bấm vào tài khoản demo để tự điền nhanh
+  document.querySelectorAll(".login-demo-item").forEach((item) => {
+    item.addEventListener("click", () => {
+      const u = item.getAttribute("data-demo-user");
+      const p = item.getAttribute("data-demo-pass");
+      if (u && p) {
+        if ($("login-username")) $("login-username").value = u;
+        if ($("login-password")) $("login-password").value = p;
+        setLoginMessage("");
+        const submitBtn = $("login-submit");
+        if (submitBtn) submitBtn.focus();
+      }
+    });
+  });
   const logoutBtn = $("btn-logout");
   if (logoutBtn) {
     logoutBtn.addEventListener("click", () =>

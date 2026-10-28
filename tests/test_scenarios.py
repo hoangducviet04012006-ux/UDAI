@@ -12,12 +12,34 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend"))
 
+import tempfile
 from fastapi.testclient import TestClient
-from sqlalchemy import inspect
+from sqlalchemy import inspect, create_engine
+from sqlalchemy.orm import sessionmaker
 from app.main import app
-from app.database import engine, Base
+from app.database import Base, get_db
+import app.database as app_db
+from app.services.schema_migration import ensure_schema_upgrades
 from seed_data import seed, DEMO_ACCOUNTS
 
+TEMP_DB = tempfile.NamedTemporaryFile(suffix=".db", delete=False)
+temp_db_path = TEMP_DB.name
+TEMP_DB.close()
+
+test_engine = create_engine(f"sqlite:///{temp_db_path}", connect_args={"check_same_thread": False})
+TestSessionLocal = sessionmaker(autocommit=False, autoflush=False, bind=test_engine)
+
+app_db.engine = test_engine
+app_db.SessionLocal = TestSessionLocal
+
+def override_get_db():
+    db = TestSessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
+
+app.dependency_overrides[get_db] = override_get_db
 client = TestClient(app)
 
 # ---------------------------------------------------------------------
@@ -91,9 +113,14 @@ def authenticate_client():
 
 def run_all_tests():
     # Tự động làm mới CSDL để kết quả kiểm thử luôn luôn chuẩn 100% khi chạy lại
-    Base.metadata.drop_all(bind=engine)
-    Base.metadata.create_all(bind=engine)
-    seed()
+    Base.metadata.drop_all(bind=test_engine)
+    Base.metadata.create_all(bind=test_engine)
+    ensure_schema_upgrades(test_engine)
+    init_db_session = TestSessionLocal()
+    try:
+        seed(session=init_db_session, target_engine=test_engine)
+    finally:
+        init_db_session.close()
 
     print_separator("BAOHANHAI - BAO CAO MINH CHUNG KIEM THU GIAI DOAN KT2")
 
@@ -116,7 +143,7 @@ def run_all_tests():
     # Whitelist bảng CORE (KT1/KT2) và bảng của module chatbot (KT4) để đối chiếu
     # -------------------------------------------------------------
     print_separator("1. MINH CHUNG: DB TAO DUOC BANG (11 BANG CORE + 5 BANG CHATBOT & FK)")
-    inspector = inspect(engine)
+    inspector = inspect(test_engine)
     tables = inspector.get_table_names()
 
     # Whitelist bảng CORE (KT1/KT2) và bảng của module chatbot (KT4)
@@ -263,22 +290,54 @@ def run_all_tests():
     print(f"[=> KET QUA MINH CHUNG 5]: {'DAT (PASS)' if br1_pass else 'THAT BAI (FAIL)'}")
 
     # -------------------------------------------------------------
-    # MINH CHỨNG 6: HẾT HẠN BẢO HÀNH (BR2 FAIL)
+    # MINH CHỨNG 6: HẾT HẠN BẢO HÀNH (BR2: TIẾP NHẬN KIỂM TRA, CHẶN SỬA CHỮA)
     # -------------------------------------------------------------
-    print_separator("6. MINH CHUNG: HET HAN BAO HANH (BR2 FAIL)")
+    print_separator("6. MINH CHUNG: HET HAN BAO HANH (BR2: TIEP NHAN KIEM TRA, CHAN SUA CHUA)")
     expired_serial_payload = {
         "serial_number": "SN-SAMS-EXPIRED-02",  # Het han tu 01/01/2024
         "customer_id": 2,                       # Dung chu so huu KH2
         "service_center_id": 1,
         "created_by": 2,
-        "issue_description": "Vo man hinh nut kinh"
+        "issue_description": "Vo man hinh nut kinh (may het han)"
     }
-    res_br2_fail = client.post("/api/v1/warranty-tickets/", json=expired_serial_payload)
-    print(f"POST /api/v1/warranty-tickets/ (Serial het han) -> Status Code: {res_br2_fail.status_code}")
-    print(f"Chi tiet thong bao loi: {res_br2_fail.json()}")
+    # (a) Tiep nhan lap phieu o RECEIVED de phong ky thuat kiem tra
+    res_br2_create = client.post("/api/v1/warranty-tickets/", json=expired_serial_payload)
+    print(f"POST /api/v1/warranty-tickets/ (Serial het han -> RECEIVED de kiem tra) -> Status Code: {res_br2_create.status_code}")
+    ticket_exp_id = res_br2_create.json().get("id") if res_br2_create.status_code == 201 else None
 
-    br2_pass = (res_br2_fail.status_code == 400 and "BR2 FAIL" in res_br2_fail.json().get("detail", ""))
-    evidence_results.append(("Chan tao phieu khi San pham het han bao hanh (BR2)", "PASS" if br2_pass else "FAIL"))
+    # (b) Quan ly phan cong KTV kiem tra
+    if ticket_exp_id:
+        client.post(f"/api/v1/warranty-tickets/{ticket_exp_id}/assign", json={"technician_id": 3, "note": "Phan cong KTV kiem tra"})
+        client.patch(f"/api/v1/warranty-tickets/{ticket_exp_id}/status", json={
+            "new_status": "INSPECTING", "changed_by": 3, "note": "KTV nhan may vao kiem tra"
+        })
+
+    # (c) Co tinh chuyen sang REPAIRING (sua chua mien phi) -> PHAI BI CHAN 400 (BR2)
+    res_br2_repair_block = client.patch(f"/api/v1/warranty-tickets/{ticket_exp_id}/status", json={
+        "new_status": "REPAIRING", "changed_by": 3,
+        "diagnosis_note": "Co tinh dua vao sua chua mien phi", "is_warranty_eligible": True
+    })
+    print(f"PATCH .../status (Co tinh sua chua may het han) -> Status Code: {res_br2_repair_block.status_code}")
+    print(f"Chi tiet: {res_br2_repair_block.json()}")
+
+    # (d) Di qua luong tu choi -> Tra may RETURNED
+    client.patch(f"/api/v1/warranty-tickets/{ticket_exp_id}/status", json={
+        "new_status": "REJECTED", "changed_by": 1,
+        "rejection_reason": "Thiet bi da het han bao hanh theo quy dinh BR2."
+    })
+    res_exp_ret = client.patch(f"/api/v1/warranty-tickets/{ticket_exp_id}/status", json={
+        "new_status": "RETURNED", "changed_by": 2,
+        "handover_note": "Tra may het han cho khach"
+    })
+
+    br2_pass = (
+        res_br2_create.status_code == 201
+        and res_br2_repair_block.status_code == 400
+        and "BR2" in str(res_br2_repair_block.json())
+        and res_exp_ret.status_code == 200
+        and res_exp_ret.json().get("resolution") == "REJECTED"
+    )
+    evidence_results.append(("Kiem tra BR2: May het han tiep nhan kiem tra, chan sua chua, di qua luong tu choi (BR2)", "PASS" if br2_pass else "FAIL"))
     print(f"[=> KET QUA MINH CHUNG 6]: {'DAT (PASS)' if br2_pass else 'THAT BAI (FAIL)'}")
 
     # -------------------------------------------------------------
@@ -326,44 +385,63 @@ def run_all_tests():
     # Sử dụng created_ticket_id (Dang o RECEIVED)
     print(f"[*] Phiếu ban dau: {created_ticket_code} (Trang thai: RECEIVED)")
 
-    # Bước 1: RECEIVED -> INSPECTING
+    # Bước 1: RECEIVED -> INSPECTING (yêu cầu phân công KTV)
     up1_res = client.patch(
         f"/api/v1/warranty-tickets/{created_ticket_id}/status",
-        json={"new_status": "INSPECTING", "changed_by": 3, "note": "Ky thuat vien da tiep nhan may vao phong kiem tra"}
+        json={"new_status": "INSPECTING", "changed_by": 1, "technician_id": 3, "note": "Ky thuat vien da tiep nhan may vao phong kiem tra"}
     )
-    print(f"-> Chuyen sang INSPECTING: Status {up1_res.status_code} | Ticket Status: {up1_res.json()['status']}")
+    print(f"-> Chuyen sang INSPECTING: Status {up1_res.status_code} | Ticket Status: {up1_res.json().get('status')}")
 
-    # Bước 2: INSPECTING -> REPAIRING
+    # Bước 2: INSPECTING -> REPAIRING (yêu cầu chẩn đoán và đủ ĐKBH)
     up2_res = client.patch(
         f"/api/v1/warranty-tickets/{created_ticket_id}/status",
-        json={"new_status": "REPAIRING", "changed_by": 3, "note": "Xac dinh loi chip nguon, tien hanh sua chua thay the linh kien"}
+        json={
+            "new_status": "REPAIRING",
+            "changed_by": 3,
+            "diagnosis_note": "Xac dinh loi chip nguon, du dieu kien bao hanh",
+            "is_warranty_eligible": True,
+            "error_category_id": 1,
+            "note": "Xac dinh loi chip nguon, tien hanh sua chua thay the linh kien"
+        }
     )
-    print(f"-> Chuyen sang REPAIRING: Status {up2_res.status_code} | Ticket Status: {up2_res.json()['status']}")
+    print(f"-> Chuyen sang REPAIRING: Status {up2_res.status_code} | Ticket Status: {up2_res.json().get('status')}")
 
-    # Bước 3: REPAIRING -> WAITING_RETURN (bắt buộc: máy sửa xong phải ở trạng thái "chờ trả máy")
+    # Bước 3: REPAIRING -> COMPLETED (Hoàn tất: sửa xong, kiểm tra sau sửa đạt yêu cầu, chờ trả máy)
     up3_res = client.patch(
         f"/api/v1/warranty-tickets/{created_ticket_id}/status",
-        json={"new_status": "WAITING_RETURN", "changed_by": 3, "note": "Da sua xong, may dang cho khach den nhan (cho tra may)"}
+        json={
+            "new_status": "COMPLETED",
+            "changed_by": 3,
+            "repair_content": "Thay chip nguon va tu loc, kiem tra tai on dinh",
+            "repair_test_passed": True,
+            "repair_test_note": "Chay thu tai 100% lien tuc 30 phut on dinh",
+            "note": "Da sua xong, may dang cho khach den nhan (cho tra may)"
+        }
     )
-    print(f"-> Chuyen sang WAITING_RETURN: Status {up3_res.status_code} | Ticket Status: {up3_res.json()['status']}")
+    print(f"-> Chuyen sang COMPLETED: Status {up3_res.status_code} | Ticket Status: {up3_res.json().get('status')}")
 
-    # Kiểm tra mốc bàn giao: ở WAITING_RETURN CHƯA được ghi handed_over_at (chưa trả máy cho khách)
+    # Kiểm tra mốc bàn giao: ở COMPLETED CHƯA được ghi handed_over_at (chưa trả máy cho khách)
     waiting_detail = client.get(f"/api/v1/warranty-tickets/{created_ticket_id}").json()
-    print(f"[*] Tai WAITING_RETURN: handed_over_at = {waiting_detail.get('handed_over_at')} (phai la None)")
+    print(f"[*] Tai COMPLETED: handed_over_at = {waiting_detail.get('handed_over_at')} (phai la None)")
 
-    # Bước 4: WAITING_RETURN -> COMPLETED (đã trả máy cho khách -> ghi mốc bàn giao)
+    # Bước 4: COMPLETED -> RETURNED (đã trả máy cho khách -> ghi mốc bàn giao và đóng phiếu)
     up4_res = client.patch(
         f"/api/v1/warranty-tickets/{created_ticket_id}/status",
-        json={"new_status": "COMPLETED", "changed_by": 3, "note": "Da ban giao may cho khach, hoan tat phieu bao hanh"}
+        json={
+            "new_status": "RETURNED",
+            "changed_by": 2,
+            "handover_note": "Khach da kiem tra may va nhan lai day du",
+            "note": "Da ban giao may cho khach, hoan tat phieu bao hanh"
+        }
     )
-    print(f"-> Chuyen sang COMPLETED: Status {up4_res.status_code} | Ticket Status: {up4_res.json()['status']}")
+    print(f"-> Chuyen sang RETURNED: Status {up4_res.status_code} | Ticket Status: {up4_res.json().get('status')}")
 
     # Kiểm tra lịch sử trạng thái đã lưu (START->RECEIVED + 4 buoc = 5 dong)
     ticket_detail = client.get(f"/api/v1/warranty-tickets/{created_ticket_id}").json()
     print(f"\n[*] Tong so dong lich su luu vet (ticket_status_history): {len(ticket_detail['status_history'])} buoc:")
     for h in ticket_detail["status_history"]:
         print(f"    - [{h['created_at'][:19]}] {h['from_status'] or 'START'} -> {h['to_status']} | Note: {h['note']}")
-    print(f"[*] Tai COMPLETED: handed_over_at = {ticket_detail.get('handed_over_at')} (da ghi moc tra may)")
+    print(f"[*] Tai RETURNED: handed_over_at = {ticket_detail.get('handed_over_at')} (da ghi moc tra may)")
 
     status_pass = (
         up1_res.status_code == 200 and up2_res.status_code == 200
@@ -371,16 +449,18 @@ def run_all_tests():
         and len(ticket_detail['status_history']) == 5
         and waiting_detail.get('handed_over_at') is None
         and ticket_detail.get('handed_over_at') is not None
+        and ticket_detail.get('status') == 'RETURNED'
+        and ticket_detail.get('resolution') == 'COMPLETED'
     )
-    evidence_results.append(("Cap nhat trang thai dung State Machine (bat buoc qua WAITING_RETURN) & Luu History", "PASS" if status_pass else "FAIL"))
+    evidence_results.append(("Cap nhat trang thai dung State Machine (qua COMPLETED -> RETURNED) & Luu History", "PASS" if status_pass else "FAIL"))
     print(f"[=> KET QUA MINH CHUNG 9]: {'DAT (PASS)' if status_pass else 'THAT BAI (FAIL)'}")
 
     # -------------------------------------------------------------
     # MINH CHỨNG BỔ SUNG: CHẶN CHUYỂN TRẠNG THÁI TRÁI PHÉP
-    #  - Nhảy cóc RECEIVED -> COMPLETED
-    #  - Bỏ qua bước "chờ trả máy": REPAIRING -> COMPLETED (bắt buộc phải qua WAITING_RETURN)
+    #  - Nhảy cóc RECEIVED -> RETURNED
+    #  - Bỏ qua bước hoàn tất kiểm tra sau sửa: REPAIRING -> RETURNED (bắt buộc phải qua COMPLETED)
     # -------------------------------------------------------------
-    print_separator("10. MINH CHUNG: CHAN CHUYEN TRANG THAI TRAI PHEP (RECEIVED -> COMPLETED & REPAIRING -> COMPLETED)")
+    print_separator("10. MINH CHUNG: CHAN CHUYEN TRANG THAI TRAI PHEP (RECEIVED -> RETURNED & REPAIRING -> RETURNED)")
     # Nạp 1 ticket mới ở RECEIVED
     t_fake = client.post("/api/v1/warranty-tickets/", json={
         "serial_number": "SN-ASUS-OWNER-TEST-04",
@@ -390,40 +470,46 @@ def run_all_tests():
         "issue_description": "May loi nguon test state transition"
     }).json()
     
-    # Cố tình nhảy cóc từ RECEIVED -> COMPLETED
+    # Cố tình nhảy cóc từ RECEIVED -> RETURNED
     illegal_res = client.patch(f"/api/v1/warranty-tickets/{t_fake['id']}/status", json={
-        "new_status": "COMPLETED",
-        "changed_by": 3,
-        "note": "Nhay coc tu RECEIVED sang COMPLETED"
+        "new_status": "RETURNED",
+        "changed_by": 2,
+        "handover_note": "Nhay coc tu RECEIVED sang RETURNED",
+        "note": "Nhay coc tu RECEIVED sang RETURNED"
     })
-    print(f"PATCH RECEIVED -> COMPLETED -> Status Code: {illegal_res.status_code}")
+    print(f"PATCH RECEIVED -> RETURNED -> Status Code: {illegal_res.status_code}")
     print(f"Chi tiet thong bao loi: {illegal_res.json()}")
 
     illegal_pass = (illegal_res.status_code == 400 and "STATE MACHINE ERROR" in illegal_res.json().get("detail", ""))
-    evidence_results.append(("Chan chuyen trang thai bat hop le (RECEIVED -> COMPLETED)", "PASS" if illegal_pass else "FAIL"))
+    evidence_results.append(("Chan chuyen trang thai bat hop le (RECEIVED -> RETURNED)", "PASS" if illegal_pass else "FAIL"))
     print(f"[=> KET QUA MINH CHUNG 10a]: {'DAT (PASS)' if illegal_pass else 'THAT BAI (FAIL)'}")
 
-    # ---- Ca 2: Bo qua buoc "cho tra may" REPAIRING -> COMPLETED (phai di qua WAITING_RETURN) ----
+    # ---- Ca 2: Bo qua buoc hoan tat kiem tra sau sua: REPAIRING -> RETURNED (phai di qua COMPLETED) ----
     # Đưa t_fake từ RECEIVED -> INSPECTING -> REPAIRING
     client.patch(f"/api/v1/warranty-tickets/{t_fake['id']}/status", json={
         "new_status": "INSPECTING",
-        "changed_by": 3,
+        "changed_by": 1,
+        "technician_id": 3,
         "note": "Tiep nhan may, dua vao phong kiem tra"
     })
     client.patch(f"/api/v1/warranty-tickets/{t_fake['id']}/status", json={
         "new_status": "REPAIRING",
         "changed_by": 3,
+        "diagnosis_note": "Xac dinh loi chip, du dieu kien bao hanh",
+        "is_warranty_eligible": True,
+        "error_category_id": 1,
         "note": "Bat dau sua chua linh kien"
     })
     before_skip = client.get(f"/api/v1/warranty-tickets/{t_fake['id']}").json()
 
-    # Cố tình đóng phiếu ngay, bỏ qua WAITING_RETURN
+    # Cố tình đóng phiếu ngay, bỏ qua COMPLETED
     skip_res = client.patch(f"/api/v1/warranty-tickets/{t_fake['id']}/status", json={
-        "new_status": "COMPLETED",
-        "changed_by": 3,
-        "note": "Dong phieu ngay, bo qua buoc cho tra may"
+        "new_status": "RETURNED",
+        "changed_by": 2,
+        "handover_note": "Dong phieu ngay, bo qua buoc hoan tat",
+        "note": "Dong phieu ngay, bo qua buoc hoan tat"
     })
-    print(f"PATCH REPAIRING -> COMPLETED (bo qua WAITING_RETURN) -> Status Code: {skip_res.status_code}")
+    print(f"PATCH REPAIRING -> RETURNED (bo qua COMPLETED) -> Status Code: {skip_res.status_code}")
     print(f"Chi tiet thong bao loi: {skip_res.json()}")
 
     after_skip = client.get(f"/api/v1/warranty-tickets/{t_fake['id']}").json()
@@ -437,7 +523,7 @@ def run_all_tests():
         and after_skip["status"] == "REPAIRING"
         and len(after_skip["status_history"]) == len(before_skip["status_history"])
     )
-    evidence_results.append(("Chan bo qua buoc cho tra may (REPAIRING -> COMPLETED)", "PASS" if skip_pass else "FAIL"))
+    evidence_results.append(("Chan bo qua buoc hoan tat (REPAIRING -> RETURNED)", "PASS" if skip_pass else "FAIL"))
     print(f"[=> KET QUA MINH CHUNG 10b]: {'DAT (PASS)' if skip_pass else 'THAT BAI (FAIL)'}")
 
     # -------------------------------------------------------------

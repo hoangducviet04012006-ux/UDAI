@@ -11,12 +11,21 @@ PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 sys.path.insert(0, PROJECT_ROOT)
 sys.path.insert(0, os.path.join(PROJECT_ROOT, "backend"))
 
-from app.database import SessionLocal, engine, Base
+import app.database as app_db
+from app.database import Base
 from app.models import (
     ServiceCenter, User, ErrorCategory, Product, Customer,
     ProductInstance, WarrantyTicket, TicketStatusHistory, RepairLog
 )
 from app.services.auth_service import hash_password, is_legacy_hash
+
+
+def __getattr__(name: str):
+    """Ủy quyền động engine và SessionLocal sang app.database để luôn trỏ đúng engine đang active."""
+    if name in ("engine", "SessionLocal"):
+        return getattr(app_db, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 # =====================================================================
 # Đợt 7 - Tài khoản demo & mật khẩu khởi tạo
@@ -26,9 +35,10 @@ from app.services.auth_service import hash_password, is_legacy_hash
 # Mật khẩu KHÔNG lưu dạng thô trong CSDL, chỉ lưu hash PBKDF2-HMAC-SHA256.
 # =====================================================================
 DEMO_ACCOUNTS = [
-    ("manager01", "Manager@123", "Nguyen Quan Ly", "MANAGER"),
-    ("receptionist01", "Reception@123", "Tran Tiep Nhan", "RECEPTIONIST"),
-    ("technician01", "Technician@123", "Le Ky Thuat", "TECHNICIAN"),
+    ("manager01", "123456", "Hoàng Đức Việt", "MANAGER"),
+    ("receptionist01", "123456", "Nguyễn Thu Hà", "RECEPTIONIST"),
+    ("technician01", "123456", "Trần Minh Tuấn", "TECHNICIAN"),
+    ("technician02", "123456", "Lê Quốc Huy", "TECHNICIAN"),
 ]
 DEMO_PASSWORDS = {username: password for username, password, _, _ in DEMO_ACCOUNTS}
 
@@ -37,12 +47,18 @@ def print_demo_credentials():
     """In bảng tài khoản demo để người dùng biết thông tin đăng nhập (mật khẩu demo, không phải hash)."""
     print("\n[*] TAI KHOAN DANG NHAP (moi vai tro 1 tai khoan):")
     for username, password, full_name, role in DEMO_ACCOUNTS:
-        print(f"    - {role:<13} | ten dang nhap: {username:<15} | mat khau: {password}")
-    print("    (Chi dung cho moi truong phat trien/demo. Doi mat khau khi trien khai that.)")
+        print(f"    - {role:<13} | ten dang nhap: {username:<15} | ho ten: {full_name}")
+    print("    (Mat khau khoi tao: 123456. Chi dung cho moi truong phat trien/demo. Doi mat khau khi trien khai that.)")
 
-def seed():
-    Base.metadata.create_all(bind=engine)
-    db = SessionLocal()
+def seed(session=None, target_engine=None):
+    eng = target_engine or app_db.engine
+    # Guardrail an toàn: trong chế độ test, không bao giờ seed đè CSDL thật
+    if os.environ.get("TESTING") == "1":
+        from test_isolation import assert_not_application_database
+        assert_not_application_database(str(eng.url))
+
+    Base.metadata.create_all(bind=eng)
+    db = session if session is not None else app_db.SessionLocal()
 
     try:
         print("Dang nap du lieu mau khoi tao...")
@@ -72,39 +88,64 @@ def seed():
             db.commit()
             print("[+] Da tao 3 ErrorCategories")
 
-        # 3. Người dùng hệ thống (Users) - mỗi vai trò 1 tài khoản, mật khẩu đã băm
+        # 3. Người dùng hệ thống (Users) - các vai trò, mật khẩu đã băm PBKDF2
+        users_to_add = []
         user_mgr = db.query(User).filter_by(username="manager01").first()
         if not user_mgr:
             user_mgr = User(
                 username="manager01",
                 password_hash=hash_password(DEMO_PASSWORDS["manager01"]),
-                full_name="Nguyen Quan Ly",
+                full_name="Hoàng Đức Việt",
                 role="MANAGER",
                 service_center_id=sc.id,
-                email="manager@baohanhai.vn",
+                email="viet.hoang@baohanhai.vn",
                 phone="0901111111"
             )
+            users_to_add.append(user_mgr)
+
+        user_rec = db.query(User).filter_by(username="receptionist01").first()
+        if not user_rec:
             user_rec = User(
                 username="receptionist01",
                 password_hash=hash_password(DEMO_PASSWORDS["receptionist01"]),
-                full_name="Tran Tiep Nhan",
+                full_name="Nguyễn Thu Hà",
                 role="RECEPTIONIST",
                 service_center_id=sc.id,
-                email="receptionist@baohanhai.vn",
+                email="ha.nguyen@baohanhai.vn",
                 phone="0902222222"
             )
-            user_tech = User(
+            users_to_add.append(user_rec)
+
+        user_tech1 = db.query(User).filter_by(username="technician01").first()
+        if not user_tech1:
+            user_tech1 = User(
                 username="technician01",
                 password_hash=hash_password(DEMO_PASSWORDS["technician01"]),
-                full_name="Le Ky Thuat",
+                full_name="Trần Minh Tuấn",
                 role="TECHNICIAN",
                 service_center_id=sc.id,
-                email="technician@baohanhai.vn",
+                email="tuan.tran@baohanhai.vn",
                 phone="0903333333"
             )
-            db.add_all([user_mgr, user_rec, user_tech])
+            users_to_add.append(user_tech1)
+
+        user_tech2 = db.query(User).filter_by(username="technician02").first()
+        if not user_tech2:
+            user_tech2 = User(
+                username="technician02",
+                password_hash=hash_password(DEMO_PASSWORDS["technician02"]),
+                full_name="Lê Quốc Huy",
+                role="TECHNICIAN",
+                service_center_id=sc.id,
+                email="huy.le@baohanhai.vn",
+                phone="0904444444"
+            )
+            users_to_add.append(user_tech2)
+
+        if users_to_add:
+            db.add_all(users_to_add)
             db.commit()
-            print("[+] Da tao 3 Users (MANAGER, RECEPTIONIST, TECHNICIAN) voi mat khau da bam PBKDF2.")
+            print(f"[+] Da tao {len(users_to_add)} Users voi mat khau da bam PBKDF2.")
 
         # 3b. Nâng cấp tài khoản cũ: bản ghi tạo trước Đợt 7 chỉ có placeholder
         #     "pbkdf2:sha256:dummyhash123" -> cấp lại mật khẩu demo để đăng nhập được.
@@ -186,13 +227,14 @@ def seed():
                 warranty_end_date=date(2028, 3, 1),
                 status="ACTIVE"
             )
-            # Serial tu nhien (kieu ma nha san xuat) de minh hoa phieu dang "Cho tra may"
+            # Serial tự nhiên để minh họa phiếu đang "Chờ trả máy" (COMPLETED)
+            # GHI CHÚ: Dữ liệu giả lập mẫu (simulated demo seed) cho CSDL demo mới, không phải lịch sử thực tế.
             inst5 = ProductInstance(
                 product_id=p1.id,
                 customer_id=c1.id,
                 serial_number="SN-ASUS-2026-0001",
-                purchase_date=date(2026, 5, 10),
-                warranty_end_date=date(2028, 5, 10),
+                purchase_date=date(2026, 1, 15),
+                warranty_end_date=date(2028, 1, 15),
                 status="ACTIVE"
             )
             db.add_all([inst1, inst2, inst3, inst4, inst5])
@@ -210,6 +252,8 @@ def seed():
                 service_center_id=sc.id,
                 created_by=rec_user.id if rec_user else 1,
                 issue_description="Man hinh Dell bi chap chon cong Type-C",
+                device_condition="May tray xuoc nhe mat lung, khong can mop, man hinh nguyen ven",
+                accessories_accompanying="Cu sac Dell Type-C 90W theo may, cap Type-C",
                 status="INSPECTING",
                 # [Đợt hoàn thiện nghiệp vụ] Chẩn đoán sơ bộ của kỹ thuật viên (KHÔNG phải gợi ý AI)
                 diagnosis_note="Da kiem tra cong Type-C: tiep xuc chap chon, nghi hong chan ket noi.",
@@ -231,25 +275,35 @@ def seed():
             db.commit()
             print(f"[+] Da tao san Ticket dang mo: {existing_ticket.ticket_code} (Status: {existing_ticket.status})")
 
-            # Phiếu mẫu thứ hai đang ở WAITING_RETURN: máy đã sửa xong, đang chờ khách tới nhận.
-            # Dùng cho thẻ "Chờ trả máy" trên bảng điều khiển và minh họa vòng đời 6 trạng thái.
+            # Phiếu mẫu thứ hai: DỮ LIỆU MẪU GIẢ LẬP (SIMULATED DEMO DATA) cho CSDL mới.
+            # Được khai báo rõ ràng trong tài liệu: chuỗi mốc giả lập phục vụ hiển thị vòng đời 6 trạng thái, không phải lịch sử thực tế.
+            # Thứ tự thời gian nhất quán: Tiếp nhận (8:30) -> Phân công (9:00) -> Chẩn đoán (10:30) -> Sửa chữa (14:00) -> Hoàn tất (15:30).
             waiting_ticket = WarrantyTicket(
                 ticket_code="TK-20260510-0001",
                 product_instance_id=inst5.id,
                 customer_id=c1.id,
                 service_center_id=sc.id,
                 created_by=rec_user.id if rec_user else 1,
+                created_at=datetime(2026, 5, 10, 8, 30),
                 issue_description="Laptop Asus khong len man hinh, den nguon nhay lien tuc",
-                status="WAITING_RETURN",
-                # Chẩn đoán + nội dung sửa chữa do KỸ THUẬT VIÊN ghi nhận (tách khỏi gợi ý của AI)
+                device_condition="May con moi 95%, nguyen tem bao hanh phong vu, ban phim dep",
+                accessories_accompanying="Cu sac Asus 240W, day nguon, balo chong soc",
+                status="COMPLETED",
+                assigned_technician_id=tech_user.id if tech_user else None,
+                assigned_at=datetime(2026, 5, 10, 9, 0),
                 diagnosis_note="Nguon khong on dinh: IC nguon bi chay, tu dien loc nguon phong ra.",
                 diagnosis_by=tech_user.id if tech_user else None,
-                diagnosis_at=datetime(2026, 5, 10, 15, 20),
+                diagnosis_at=datetime(2026, 5, 10, 10, 30),
+                is_warranty_eligible=True,
+                warranty_check_note="Thiet bi con nguyen tem bao hanh, du dieu kien sua chua mien phi.",
                 repair_content="Thay IC nguon va 2 tu dien loc; ve sinh tan nhiet, do lai dien ap 19V on dinh.",
                 repair_parts="IC nguon RT8205, tu dien 470uF",
-                repair_note="May chay thu 2 gio lien tuc, nhiet do CPU 65 do C - dat yeu cau.",
+                repair_note="May chay thu 1.5 gio lien tuc, nhiet do CPU 65 do C - dat yeu cau.",
+                repair_test_passed=True,
+                repair_test_note="Kiem tra sau sua dat yeu cau, may chay on dinh.",
                 repair_by=tech_user.id if tech_user else None,
-                repair_at=datetime(2026, 5, 10, 17, 45),
+                repair_at=datetime(2026, 5, 10, 14, 0),
+                completed_at=datetime(2026, 5, 10, 15, 30),
             )
             db.add(waiting_ticket)
             db.commit()
@@ -259,26 +313,29 @@ def seed():
                 TicketStatusHistory(
                     ticket_id=waiting_ticket.id, from_status=None, to_status="RECEIVED",
                     changed_by=rec_user.id if rec_user else 1,
-                    note="Khoi tao phieu tiep nhan bao hanh (Dat toan bo BR1-BR4)."
+                    note="Khoi tao phieu tiep nhan bao hanh (Dat toan bo BR1-BR4).",
+                    created_at=datetime(2026, 5, 10, 8, 30),
                 ),
                 TicketStatusHistory(
                     ticket_id=waiting_ticket.id, from_status="RECEIVED", to_status="INSPECTING",
-                    changed_by=tech_user.id if tech_user else 1,
-                    note="Kiem tra bo mach nguon, xac dinh loi IC nguon."
+                    changed_by=rec_user.id if tech_user else 1,
+                    note="Phan cong KTV va kiem tra bo mach nguon, xac dinh loi IC nguon.",
+                    created_at=datetime(2026, 5, 10, 9, 0),
                 ),
                 TicketStatusHistory(
                     ticket_id=waiting_ticket.id, from_status="INSPECTING", to_status="REPAIRING",
                     changed_by=tech_user.id if tech_user else 1,
-                    note="Thay IC nguon va ve sinh tan nhiet."
+                    note="Du dieu kien bao hanh, bat dau thay IC nguon va ve sinh tan nhiet.",
+                    created_at=datetime(2026, 5, 10, 10, 30),
                 ),
                 TicketStatusHistory(
-                    ticket_id=waiting_ticket.id, from_status="REPAIRING", to_status="WAITING_RETURN",
+                    ticket_id=waiting_ticket.id, from_status="REPAIRING", to_status="COMPLETED",
                     changed_by=tech_user.id if tech_user else 1,
-                    note="May da hoat dong on dinh, dang cho khach den nhan may."
+                    note="Sua chua hoan tat va kiem tra sau sua dat yeu cau, may san sang cho khach nhan.",
+                    created_at=datetime(2026, 5, 10, 15, 30),
                 ),
             ]
             db.add_all(waiting_history)
-            # Nhật ký sửa chữa (bảng repair_logs) - lịch sử máy đã được xử lý những gì, ai làm
             if tech_user:
                 db.add(
                     RepairLog(
@@ -287,12 +344,12 @@ def seed():
                         action_description=waiting_ticket.repair_content,
                         parts_used=waiting_ticket.repair_parts,
                         labor_hours=1.5,
-                        logged_at=datetime(2026, 5, 10, 17, 45),
+                        logged_at=datetime(2026, 5, 10, 14, 0),
                     )
                 )
             db.commit()
-            print(f"[+] Da tao san Ticket cho tra may: {waiting_ticket.ticket_code} (Status: {waiting_ticket.status})")
-            print("[+] Da ghi chan doan + noi dung sua chua + nhat ky repair_logs cho phieu mau.")
+            print(f"[+] Da tao san Ticket hoan tat cho tra may: {waiting_ticket.ticket_code} (Status: {waiting_ticket.status})")
+            print("[+] Da ghi chan doan + noi dung sua chua + kiem tra sau sua dat yeu cau.")
 
         print("\n=> DU LIEU KHOI TAO DA NAP THANH CONG!")
         print_demo_credentials()
@@ -301,7 +358,8 @@ def seed():
         print(f"[-] Loi nap du lieu: {e}")
         raise e
     finally:
-        db.close()
+        if session is None:
+            db.close()
 
 if __name__ == "__main__":
     seed()

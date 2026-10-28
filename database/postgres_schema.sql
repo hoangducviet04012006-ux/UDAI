@@ -87,28 +87,47 @@ CREATE TABLE IF NOT EXISTS warranty_tickets (
     service_center_id BIGINT NOT NULL REFERENCES service_centers(id) ON DELETE RESTRICT, -- FK 6
     created_by BIGINT NOT NULL REFERENCES users(id) ON DELETE RESTRICT, -- FK 7
     issue_description TEXT NOT NULL,
+    device_condition TEXT,
+    accessories_accompanying TEXT,
     error_category_id BIGINT REFERENCES error_categories(id) ON DELETE SET NULL, -- FK 8
-    status VARCHAR(20) NOT NULL CHECK (status IN ('RECEIVED', 'INSPECTING', 'REPAIRING', 'WAITING_RETURN', 'COMPLETED', 'REJECTED')) DEFAULT 'RECEIVED',
-    rejection_reason TEXT,
-    rejection_proposed_by BIGINT REFERENCES users(id) ON DELETE SET NULL, -- FK 9
-    rejection_proposed_at TIMESTAMPTZ,
-    rejection_reviewed_by BIGINT REFERENCES users(id) ON DELETE SET NULL, -- FK 10
-    rejection_reviewed_at TIMESTAMPTZ,
-    rejection_review_status VARCHAR(20) CHECK (rejection_review_status IN ('PENDING', 'APPROVED', 'DECLINED')),
-    handed_over_at TIMESTAMPTZ,
-    -- [Đợt hoàn thiện nghiệp vụ] Thông tin xử lý thực tế của phiếu.
-    -- Tách bạch 3 nguồn: khách mô tả (issue_description) / AI gợi ý (ai_results) /
-    -- kỹ thuật viên kết luận (diagnosis_*, repair_*). Bàn giao: handover_*.
+    status VARCHAR(20) NOT NULL CHECK (status IN ('RECEIVED', 'INSPECTING', 'REPAIRING', 'COMPLETED', 'REJECTED', 'RETURNED')) DEFAULT 'RECEIVED',
+    
+    -- Phân công kỹ thuật viên phụ trách
+    assigned_technician_id BIGINT REFERENCES users(id) ON DELETE SET NULL, -- FK
+    assigned_at TIMESTAMPTZ,
+
+    -- Chẩn đoán & điều kiện bảo hành
     diagnosis_note TEXT,
     diagnosis_by BIGINT REFERENCES users(id) ON DELETE SET NULL, -- FK 11
     diagnosis_at TIMESTAMPTZ,
+    is_warranty_eligible BOOLEAN,
+    warranty_check_note TEXT,
+
+    -- Nghiệp vụ sửa chữa & kiểm tra sau sửa
     repair_content TEXT,
     repair_parts TEXT,
     repair_note TEXT,
     repair_by BIGINT REFERENCES users(id) ON DELETE SET NULL, -- FK 12
     repair_at TIMESTAMPTZ,
+    repair_test_passed BOOLEAN,
+    repair_test_note TEXT,
+
+    -- Nhánh từ chối bảo hành
+    rejection_reason TEXT,
+    rejection_proposed_by BIGINT REFERENCES users(id) ON DELETE SET NULL, -- FK 9
+    rejection_proposed_at TIMESTAMPTZ,
+    rejection_proposal_note TEXT,
+    rejection_reviewed_by BIGINT REFERENCES users(id) ON DELETE SET NULL, -- FK 10
+    rejection_reviewed_at TIMESTAMPTZ,
+    rejection_review_status VARCHAR(20) CHECK (rejection_review_status IN ('PENDING', 'APPROVED', 'DECLINED')),
+
+    -- Bàn giao trả máy & Đóng phiếu
+    completed_at TIMESTAMPTZ,
     handed_over_by BIGINT REFERENCES users(id) ON DELETE SET NULL, -- FK 13
+    handed_over_at TIMESTAMPTZ,
     handover_note TEXT,
+    resolution VARCHAR(20) CHECK (resolution IS NULL OR resolution IN ('COMPLETED', 'REJECTED')),
+
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP
 );
@@ -127,8 +146,8 @@ CREATE TABLE IF NOT EXISTS technician_assignments (
 CREATE TABLE IF NOT EXISTS ticket_status_history (
     id BIGSERIAL PRIMARY KEY,
     ticket_id BIGINT NOT NULL REFERENCES warranty_tickets(id) ON DELETE CASCADE, -- FK 14
-    from_status VARCHAR(20) CHECK (from_status IS NULL OR from_status IN ('RECEIVED', 'INSPECTING', 'REPAIRING', 'WAITING_RETURN', 'COMPLETED', 'REJECTED')),
-    to_status VARCHAR(20) NOT NULL CHECK (to_status IN ('RECEIVED', 'INSPECTING', 'REPAIRING', 'WAITING_RETURN', 'COMPLETED', 'REJECTED')),
+    from_status VARCHAR(20) CHECK (from_status IS NULL OR from_status IN ('RECEIVED', 'INSPECTING', 'REPAIRING', 'COMPLETED', 'REJECTED', 'RETURNED')),
+    to_status VARCHAR(20) NOT NULL CHECK (to_status IN ('RECEIVED', 'INSPECTING', 'REPAIRING', 'COMPLETED', 'REJECTED', 'RETURNED')),
     changed_by BIGINT NOT NULL REFERENCES users(id) ON DELETE RESTRICT, -- FK 15
     note TEXT,
     created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -268,3 +287,10 @@ CREATE INDEX IF NOT EXISTS idx_chat_sessions_status ON chat_sessions(status);
 CREATE INDEX IF NOT EXISTS idx_chat_sessions_ticket ON chat_sessions(ticket_id);
 CREATE INDEX IF NOT EXISTS idx_chat_messages_session ON chat_messages(session_id, turn_index);
 CREATE INDEX IF NOT EXISTS idx_chat_handoffs_status ON chat_handoffs(status);
+
+-- Trợ lý bảo hành: mã tra cứu chỉ lưu SHA-256; không lưu mã gốc.
+CREATE TABLE IF NOT EXISTS ticket_lookup_credentials (
+    ticket_id BIGINT PRIMARY KEY REFERENCES warranty_tickets(id) ON DELETE CASCADE,
+    token_hash VARCHAR(64) NOT NULL,
+    expires_at TIMESTAMP NOT NULL
+);

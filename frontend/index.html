@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <!-- data-auth: "pending" (đang kiểm tra phiên) | "guest" (chưa đăng nhập) | "authed" (đã đăng nhập).
      Thuộc tính này do app.js điều khiển để chọn hiển thị MÀN HÌNH ĐĂNG NHẬP hay KHỐI ỨNG DỤNG. -->
-<html lang="vi" class="dark" data-auth="pending">
+<html lang="vi" data-auth="pending">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -11,7 +11,6 @@
   <script src="https://cdn.tailwindcss.com"></script>
   <script>
     tailwind.config = {
-      darkMode: 'class',
       theme: {
         extend: {
           colors: {
@@ -23,13 +22,14 @@
   </script>
 
   <!-- Custom Styles -->
-  <link rel="stylesheet" href="/static/styles.css">
+  <link rel="stylesheet" href="/static/styles.css?v=20261027_3">
 
   <!-- Lucide Icons + Chart.js -->
   <script src="https://unpkg.com/lucide@latest"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <link rel="stylesheet" href="/static/support.css">
 </head>
-<body class="bg-[#090D16] text-slate-100 min-h-screen flex flex-col antialiased selection:bg-indigo-500 selection:text-white">
+<body class="bg-slate-50 text-slate-800 min-h-screen flex flex-col antialiased selection:bg-indigo-500 selection:text-white">
 
   <!-- Thông báo nổi (toast) -->
   <div id="toast-container"></div>
@@ -41,28 +41,28 @@
        ===================================================================== -->
   <section id="login-screen" aria-label="Đăng nhập hệ thống">
     <div class="login-card glass-panel">
-      <div class="flex items-center gap-3 mb-5">
+      <div class="flex items-center gap-3 mb-6">
         <div class="login-logo">
-          <div class="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-            <i data-lucide="shield-check" class="w-5 h-5 text-indigo-400"></i>
+          <div class="w-full h-full bg-white rounded-[10px] flex items-center justify-center">
+            <i data-lucide="shield-check" class="w-6 h-6 text-indigo-600"></i>
           </div>
         </div>
         <div>
-          <div class="font-extrabold tracking-tight text-lg text-white">BaoHanhAI</div>
-          <p class="text-[11px] text-slate-400">Hệ thống quản lý bảo hành &bull; Đăng nhập để làm việc</p>
+          <div class="font-extrabold tracking-tight text-xl text-slate-900">BaoHanhAI</div>
+          <p class="text-xs text-slate-500 font-medium">Hệ thống quản lý bảo hành sản phẩm</p>
         </div>
       </div>
 
-      <form id="login-form" class="space-y-3" novalidate>
+      <form id="login-form" class="space-y-4" novalidate>
         <div>
           <label class="form-label" for="login-username">Tên đăng nhập</label>
           <input type="text" id="login-username" autocomplete="username" spellcheck="false"
-                 class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Ví dụ: manager01">
+                 class="w-full glass-input" placeholder="Ví dụ: manager01">
         </div>
         <div>
           <label class="form-label" for="login-password">Mật khẩu</label>
           <input type="password" id="login-password" autocomplete="current-password"
-                 class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Nhập mật khẩu của bạn">
+                 class="w-full glass-input" placeholder="Nhập mật khẩu của bạn">
         </div>
         <div id="login-message" class="hidden"></div>
         <button type="submit" class="btn btn-primary w-full justify-center" id="login-submit">
@@ -70,268 +70,271 @@
         </button>
       </form>
 
-      <p class="text-[11px] text-slate-500 mt-3">
+      <p class="text-xs text-slate-500 mt-4 leading-relaxed">
         Mỗi nhân viên có một tài khoản riêng. Menu và thao tác được hiển thị theo vai trò của tài khoản đăng nhập.
       </p>
 
-      <details class="login-hint mt-3">
-        <summary class="text-[11px] text-slate-400">Tài khoản demo (dùng khi chấm điểm / kiểm thử)</summary>
-        <ul class="mt-2 space-y-1 text-[11px] text-slate-300 font-mono">
-          <li>manager01 / Manager@123 <span class="font-sans text-slate-500">&ndash; Quản lý</span></li>
-          <li>receptionist01 / Reception@123 <span class="font-sans text-slate-500">&ndash; Nhân viên tiếp nhận</span></li>
-          <li>technician01 / Technician@123 <span class="font-sans text-slate-500">&ndash; Kỹ thuật viên</span></li>
+      <details class="login-hint mt-4 pt-3 border-t border-slate-100">
+        <summary class="text-xs font-semibold text-slate-600 hover:text-indigo-600 transition-colors cursor-pointer">Tài khoản demo (bấm để chọn nhanh)</summary>
+        <ul class="mt-3 space-y-2 text-xs">
+          <li class="login-demo-item flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-indigo-50/70 cursor-pointer border border-slate-200 hover:border-indigo-300 transition-all text-slate-800"
+              data-demo-user="manager01" data-demo-pass="123456" title="Bấm để tự điền tài khoản này">
+            <span class="font-bold text-slate-900 font-mono">manager01</span>
+            <span class="text-xs text-indigo-700 font-semibold">Hoàng Đức Việt &ndash; Quản lý</span>
+          </li>
+          <li class="login-demo-item flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-indigo-50/70 cursor-pointer border border-slate-200 hover:border-indigo-300 transition-all text-slate-800"
+              data-demo-user="receptionist01" data-demo-pass="123456" title="Bấm để tự điền tài khoản này">
+            <span class="font-bold text-slate-900 font-mono">receptionist01</span>
+            <span class="text-xs text-indigo-700 font-semibold">Nguyễn Thu Hà &ndash; Tiếp nhận</span>
+          </li>
+          <li class="login-demo-item flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-indigo-50/70 cursor-pointer border border-slate-200 hover:border-indigo-300 transition-all text-slate-800"
+              data-demo-user="technician01" data-demo-pass="123456" title="Bấm để tự điền tài khoản này">
+            <span class="font-bold text-slate-900 font-mono">technician01</span>
+            <span class="text-xs text-indigo-700 font-semibold">Trần Minh Tuấn &ndash; Kỹ thuật</span>
+          </li>
+          <li class="login-demo-item flex items-center justify-between p-2.5 rounded-xl bg-slate-50 hover:bg-indigo-50/70 cursor-pointer border border-slate-200 hover:border-indigo-300 transition-all text-slate-800"
+              data-demo-user="technician02" data-demo-pass="123456" title="Bấm để tự điền tài khoản này">
+            <span class="font-bold text-slate-900 font-mono">technician02</span>
+            <span class="text-xs text-indigo-700 font-semibold">Lê Quốc Huy &ndash; Kỹ thuật</span>
+          </li>
         </ul>
-        <p class="text-[10px] text-slate-500 mt-1">Chỉ dùng cho môi trường phát triển/demo của môn học.</p>
+        <p class="text-xs text-slate-500 mt-2">Bấm trực tiếp vào tài khoản ở trên để tự động điền tên đăng nhập &amp; mật khẩu (mặc định: 123456).</p>
       </details>
     </div>
   </section>
 
-  <!-- =====================================================================
-       KHỐI ỨNG DỤNG: chỉ hiển thị sau khi đăng nhập thành công
-       ===================================================================== -->
-  <div id="app-shell" class="flex-1 flex flex-col">
+  <!-- ================= KHỐI ỨNG DỤNG (cần đăng nhập mới hiển thị) ================= -->
+  <div id="app-shell" class="min-h-screen flex bg-slate-50 text-slate-800">
 
-  <!-- ================= THANH ĐIỀU HƯỚNG CHÍNH ================= -->
-  <header class="sticky top-0 z-40 border-b border-slate-800/80 bg-[#090D16]/85 backdrop-blur-md">
-    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between gap-3">
+    <!-- Lớp nền mờ cho menu trên màn hình di động -->
+    <div id="sidebar-backdrop" class="fixed inset-0 bg-slate-900/40 z-40 hidden transition-opacity lg:hidden" onclick="toggleSidebar(false)"></div>
 
-      <div class="flex items-center gap-3 shrink-0">
-        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-pink-500 p-0.5 shadow-lg shadow-indigo-500/20">
-          <div class="w-full h-full bg-slate-950 rounded-[10px] flex items-center justify-center">
-            <i data-lucide="shield-check" class="w-5 h-5 text-indigo-400"></i>
+    <!-- ================= SIDEBAR ĐIỀU HƯỚNG TRÁI (~240px) ================= -->
+    <aside id="app-sidebar" class="app-sidebar fixed lg:sticky top-0 inset-y-0 left-0 z-50 w-60 h-screen bg-slate-900 border-r border-slate-800 flex flex-col shrink-0 transition-all duration-200 -translate-x-full lg:translate-x-0">
+      <!-- Đầu sidebar: Logo & Thương hiệu -->
+      <div class="h-16 px-4 flex items-center justify-between border-b border-slate-800 shrink-0">
+        <div class="flex items-center gap-2.5 min-w-0">
+          <div class="w-9 h-9 rounded-xl bg-indigo-600 flex items-center justify-center shadow-md shadow-indigo-900/50 shrink-0">
+            <i data-lucide="shield-check" class="w-5 h-5 text-white"></i>
+          </div>
+          <div class="sidebar-brand-text truncate">
+            <div class="font-bold text-white text-base leading-tight tracking-tight">BaoHanhAI</div>
+            <div class="text-[11px] text-slate-400 font-medium leading-tight">Quản lý bảo hành</div>
           </div>
         </div>
-        <div>
-          <div class="font-extrabold tracking-tight text-lg bg-gradient-to-r from-white via-slate-100 to-slate-400 bg-clip-text text-transparent">BaoHanhAI</div>
-          <p class="text-[11px] text-slate-400 hidden sm:block">Quản lý bảo hành sản phẩm &bull; Nhóm 6</p>
-        </div>
-      </div>
-
-      <!-- [Đợt 6] Xếp menu theo việc nhân viên làm hằng ngày: tiếp nhận -> tra cứu -> xác định lỗi,
-           rồi mới tới các màn sổ/danh mục (tra cứu nội bộ) sau dấu phân cách.
-           [Đợt 7] `data-perm` = quyền tối thiểu để thấy mục menu; app.js ẩn/hiện theo vai trò đăng nhập. -->
-      <nav class="hidden lg:flex items-center gap-1 border border-slate-800/80 p-1 rounded-xl bg-slate-900/60">
-        <button class="nav-tab-btn" data-tab="dashboard" data-perm="dashboard.view" title="Xem nhanh tình hình tiếp nhận và xử lý"><i data-lucide="layout-dashboard" class="w-4 h-4"></i> Tổng quan</button>
-        <button class="nav-tab-btn" data-tab="tickets" data-perm="ticket.view" title="Tiếp nhận máy mới và theo dõi phiếu bảo hành"><i data-lucide="file-text" class="w-4 h-4"></i> Phiếu bảo hành</button>
-        <button class="nav-tab-btn" data-tab="lookup" data-perm="lookup.view" title="Tra theo số sê-ri hoặc mã phiếu để biết máy còn bảo hành không"><i data-lucide="search-check" class="w-4 h-4"></i> Tra cứu bảo hành</button>
-        <button class="nav-tab-btn" data-tab="ai" data-perm="ai.view" title="Gợi ý loại lỗi cho phiếu; chỉ ghi vào phiếu sau khi nhân viên xác nhận"><i data-lucide="wand-2" class="w-4 h-4"></i> Hỗ trợ xác định lỗi</button>
-        <span class="nav-sep" aria-hidden="true"></span>
-        <button class="nav-tab-btn" data-tab="customers" data-perm="customer.view" title="Sổ khách hàng: thêm khách, sửa liên hệ, xem khách đang gửi máy nào"><i data-lucide="users" class="w-4 h-4"></i> Khách hàng</button>
-        <button class="nav-tab-btn" data-tab="products" data-perm="product.view" title="Danh mục dòng máy và thời hạn bảo hành mặc định"><i data-lucide="package" class="w-4 h-4"></i> Danh mục máy</button>
-        <button class="nav-tab-btn" data-tab="devices" data-perm="device.view" title="Máy đã đăng ký theo số sê-ri"><i data-lucide="hard-drive" class="w-4 h-4"></i> Máy đã đăng ký</button>
-        <span class="nav-sep" data-perm="user.view" aria-hidden="true"></span>
-        <button class="nav-tab-btn" data-tab="accounts" data-perm="user.view" title="Danh sách tài khoản nhân viên và vai trò (chỉ Quản lý)"><i data-lucide="shield-user" class="w-4 h-4"></i> Tài khoản nhân viên</button>
-        <!-- Nhóm "Tra cứu nội bộ" (Khách hàng / Danh mục máy / Máy đã đăng ký):
-             app.js chuyển các mục này vào đây khi backend xếp chúng là menu phụ
-             của vai trò đang đăng nhập (ví dụ Kỹ thuật viên). -->
-        <div class="relative hidden" id="nav-more">
-          <button type="button" class="nav-tab-btn" id="nav-more-toggle" onclick="toggleNavMore()"
-                  title="Sổ và danh mục tra cứu nội bộ: khách hàng, danh mục máy, máy đã đăng ký">
-            <i data-lucide="folder-search" class="w-4 h-4"></i> Tra cứu nội bộ <i data-lucide="chevron-down" class="w-3 h-3"></i>
-          </button>
-          <div id="nav-more-panel" class="nav-more-panel hidden"></div>
-        </div>
-      </nav>
-
-      <div class="flex items-center gap-2 shrink-0">
-        <!-- Phiên làm việc hiện tại: tên nhân viên + vai trò + nút đăng xuất -->
-        <div id="session-chip" class="session-chip">
-          <i data-lucide="circle-user-round" class="w-4 h-4 text-indigo-300 shrink-0"></i>
-          <div class="leading-tight min-w-0 hidden sm:block">
-            <div class="session-name" id="session-name">&ndash;</div>
-            <div class="session-role" id="session-role">&ndash;</div>
-          </div>
-          <button type="button" class="btn btn-secondary btn-sm" id="btn-logout" title="Đăng xuất khỏi phiên làm việc hiện tại">
-            <i data-lucide="log-out" class="w-3.5 h-3.5"></i> Thoát
-          </button>
-        </div>
-        <button id="btn-goto-tickets" class="btn btn-primary" data-perm="ticket.create" title="Đăng ký máy (nếu chưa có) và tạo phiếu bảo hành">
-          <i data-lucide="file-plus-2" class="w-4 h-4"></i>
-          <span class="hidden sm:inline">Tiếp nhận máy mới</span>
-        </button>
-      </div>
-    </div>
-
-    <!-- Menu cho màn hình nhỏ -->
-    <div class="lg:hidden border-t border-slate-800/80 overflow-x-auto">
-      <div class="flex items-center gap-1 p-2 min-w-max nav-tab-mobile">
-        <button class="nav-tab-btn" data-tab="dashboard" data-perm="dashboard.view">Tổng quan</button>
-        <button class="nav-tab-btn" data-tab="tickets" data-perm="ticket.view">Phiếu bảo hành</button>
-        <button class="nav-tab-btn" data-tab="lookup" data-perm="lookup.view">Tra cứu bảo hành</button>
-        <button class="nav-tab-btn" data-tab="ai" data-perm="ai.view">Hỗ trợ xác định lỗi</button>
-        <span class="nav-sep" aria-hidden="true"></span>
-        <button class="nav-tab-btn" data-tab="customers" data-perm="customer.view">Khách hàng</button>
-        <button class="nav-tab-btn" data-tab="products" data-perm="product.view">Danh mục máy</button>
-        <button class="nav-tab-btn" data-tab="devices" data-perm="device.view">Máy đã đăng ký</button>
-        <span class="nav-sep" data-perm="user.view" aria-hidden="true"></span>
-        <button class="nav-tab-btn" data-tab="accounts" data-perm="user.view">Tài khoản nhân viên</button>
-      </div>
-    </div>
-  </header>
-
-  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-6">
-
-    <!-- ======================= TAB 1: TỔNG QUAN ======================= -->
-    <section id="tab-dashboard" class="tab-content-panel hidden space-y-6">
-
-      <!-- ĐẦU TRANG: tiêu đề + vai trò (backend trả về theo tài khoản đăng nhập) -->
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800 flex flex-col md:flex-row md:items-center justify-between gap-4">
-        <div class="min-w-0">
-          <div class="flex items-center gap-2 flex-wrap">
-            <h1 class="text-xl font-bold text-white" id="dash-title">Đang tải bảng điều khiển…</h1>
-            <span class="dash-chip" id="dash-role-chip">–</span>
-            <span class="dash-chip dash-chip-scope hidden" id="dash-scope-chip">–</span>
-          </div>
-          <p class="text-xs text-slate-400 mt-1" id="dash-subtitle">Hệ thống đang xác định việc bạn cần làm.</p>
-        </div>
-        <button class="btn btn-secondary shrink-0" onclick="loadDashboard(true)">
-          <i data-lucide="refresh-cw" class="w-4 h-4"></i> Làm mới số liệu
+        <button type="button" class="lg:hidden text-slate-400 hover:text-white p-1.5 rounded-lg hover:bg-slate-800" onclick="toggleSidebar(false)">
+          <i data-lucide="x" class="w-5 h-5"></i>
         </button>
       </div>
 
-      <!-- THAO TÁC NHANH: do backend đặt nhãn theo vai trò (nhân viên không phải tự đoán) -->
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
-        <h2 class="section-title mb-1"><i data-lucide="zap" class="w-4 h-4 text-amber-400"></i> Việc thường làm</h2>
-        <p class="text-xs text-slate-400 mb-3" id="dash-quick-hint">
-          Những thao tác chính của vai trò bạn trong một ca làm việc.
-        </p>
-        <div id="dash-quick-actions" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3"></div>
-        <div class="mt-3 flex flex-col sm:flex-row sm:items-center gap-2">
-          <input type="text" id="dash-lookup-input" placeholder="Tra cứu nhanh: nhập số sê-ri hoặc mã phiếu (ví dụ SN-ASUS-VALID-01 / TK-...)"
-                 class="glass-input px-3 py-2 rounded-xl text-sm flex-1" onkeyup="if(event.key==='Enter') dashLookup()">
-          <button class="btn btn-primary" onclick="dashLookup()"><i data-lucide="search" class="w-4 h-4"></i> Tra cứu</button>
-        </div>
-        <div id="dash-notes" class="mt-3 space-y-1 text-[11px] text-slate-400"></div>
-      </div>
-
-      <!-- THẺ SỐ LIỆU theo vai trò (backend quyết định thẻ nào cần hiển thị) -->
-      <div id="dash-cards" class="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-5 gap-3"></div>
-
-      <!-- NHÓM CÔNG VIỆC: mỗi ô bấm được -> mở danh sách phiếu / mở trực tiếp phiếu -->
-      <div class="grid grid-cols-1 lg:grid-cols-3 gap-4">
-        <div class="glass-panel rounded-2xl p-5 border border-slate-800 lg:col-span-2">
-          <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-            <h2 class="section-title" id="dash-workload-title"><i data-lucide="list-checks" class="w-4 h-4 text-amber-400"></i> Công việc theo bước</h2>
-            <button class="btn btn-secondary btn-sm" onclick="openTicketsFiltered('')"><i data-lucide="arrow-right" class="w-3.5 h-3.5"></i> Mở danh sách phiếu</button>
-          </div>
-          <div id="dash-workload" class="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-3 gap-3"></div>
-          <p class="text-[11px] text-slate-500 mt-3" id="dash-workload-hint"></p>
+      <!-- Danh sách các mục menu theo vai trò -->
+      <div class="flex-1 overflow-y-auto px-3 py-4 space-y-5">
+        <div id="nav-section-work">
+          <div class="sidebar-section-title px-3 mb-2 text-xs font-bold text-slate-400 uppercase tracking-wider">Việc hằng ngày</div>
+          <nav class="space-y-1">
+            <button class="nav-tab-btn" data-tab="dashboard" data-perm="dashboard.view" title="Xem nhanh tình hình tiếp nhận và xử lý">
+              <i data-lucide="layout-dashboard" class="w-4 h-4 shrink-0"></i>
+              <span class="nav-label">Tổng quan</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="tickets" data-perm="ticket.view" title="Tiếp nhận bảo hành và theo dõi phiếu bảo hành">
+              <i data-lucide="file-text" class="w-4 h-4 shrink-0"></i>
+              <span class="nav-label">Phiếu bảo hành</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="lookup" data-perm="lookup.view" title="Tra theo số sê-ri hoặc mã phiếu">
+              <i data-lucide="search-check" class="w-4 h-4 shrink-0"></i>
+              <span class="nav-label">Tra cứu bảo hành</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="ai" data-perm="ai.view" title="Gợi ý loại lỗi cho phiếu">
+              <i data-lucide="wand-2" class="w-4 h-4 shrink-0"></i>
+              <span class="nav-label">Hỗ trợ xác định lỗi</span>
+            </button>
+          </nav>
         </div>
 
-        <div class="glass-panel rounded-2xl p-5 border border-slate-800 hidden" id="dash-attention-panel">
-          <h2 class="section-title mb-3"><i data-lucide="alert-triangle" class="w-4 h-4 text-amber-400"></i> Việc cần chú ý</h2>
-          <div id="dash-attention" class="space-y-2 max-h-80 overflow-y-auto pr-1"></div>
-          <p class="text-[11px] text-slate-500 mt-3">
-            Chỉ liệt kê dữ liệu thật của phiếu (thiếu kết luận, thiếu nội dung sửa chữa, máy chờ khách nhận).
-          </p>
-        </div>
-
-        <div class="glass-panel rounded-2xl p-5 border border-slate-800 hidden" id="dash-chart-panel">
-          <h2 class="section-title mb-3"><i data-lucide="pie-chart" class="w-4 h-4 text-indigo-400"></i> Phân bổ phiếu theo trạng thái</h2>
-          <div class="h-60"><canvas id="statusDonutChart"></canvas></div>
-          <div id="dash-status-chips" class="flex flex-wrap gap-2 mt-3"></div>
-        </div>
-      </div>
-
-      <!-- VIỆC CẦN LÀM NGAY: danh sách đã sắp theo nghiệp vụ, mỗi phiếu chỉ 1 hành động chính -->
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
-        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h2 class="section-title"><i data-lucide="target" class="w-4 h-4 text-emerald-400"></i> Việc cần làm ngay</h2>
-          <span class="text-[11px] text-slate-500" id="dash-focus-hint">Đã sắp theo thứ tự ưu tiên nghiệp vụ</span>
-        </div>
-        <div id="dash-focus" class="space-y-2"></div>
-      </div>
-
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
-        <div class="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h2 class="section-title" id="dash-active-title"><i data-lucide="hammer" class="w-4 h-4 text-cyan-400"></i> Phiếu đang xử lý</h2>
-          <div class="flex items-center gap-2 flex-wrap" id="dash-view-buttons">
-            <button class="btn btn-secondary btn-sm" onclick="setDashView('all')">Toàn bộ hệ thống</button>
-            <button class="btn btn-secondary btn-sm" onclick="setDashView('mine')">Việc của tôi</button>
-            <button class="btn btn-secondary btn-sm" onclick="openTicketsFiltered('')"><i data-lucide="arrow-right" class="w-3.5 h-3.5"></i> Xem tất cả phiếu</button>
-          </div>
-        </div>
-        <div class="overflow-x-auto">
-          <table class="w-full min-w-[880px]">
-            <thead>
-              <tr>
-                <th class="table-th">Mã phiếu</th>
-                <th class="table-th">Thiết bị (số sê-ri)</th>
-                <th class="table-th">Khách hàng</th>
-                <th class="table-th">Trạng thái</th>
-                <th class="table-th">Nhân viên phụ trách</th>
-                <th class="table-th">Ngày tiếp nhận</th>
-                <th class="table-th" id="dash-active-last-col">Lý do cần chú ý</th>
-                <th class="table-th text-right">Thao tác</th>
-              </tr>
-            </thead>
-            <tbody id="dash-active-body">
-              <tr><td class="table-msg" colspan="8">Đang tải dữ liệu...</td></tr>
-            </tbody>
-          </table>
+        <div id="nav-section-admin" style="display: none;">
+          <div class="sidebar-section-title px-3 mb-2 text-xs font-bold text-slate-400 uppercase tracking-wider">Sổ &amp; Quản trị</div>
+          <nav class="space-y-1" id="nav-section-admin-items">
+            <button class="nav-tab-btn" data-tab="customers" data-perm="customer.view" title="Sổ khách hàng">
+              <i data-lucide="users" class="w-4 h-4 shrink-0"></i>
+              <span class="nav-label">Khách hàng</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="products" data-perm="product.view" title="Danh mục dòng máy">
+              <i data-lucide="package" class="w-4 h-4 shrink-0"></i>
+              <span class="nav-label">Danh mục máy</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="devices" data-perm="device.view" title="Máy đã đăng ký">
+              <i data-lucide="hard-drive" class="w-4 h-4 shrink-0"></i>
+              <span class="nav-label">Máy đã đăng ký</span>
+            </button>
+            <button class="nav-tab-btn" data-tab="accounts" data-perm="user.view" title="Tài khoản nhân viên">
+              <i data-lucide="shield-user" class="w-4 h-4 shrink-0"></i>
+              <span class="nav-label">Tài khoản nhân viên</span>
+            </button>
+            <!-- Nhóm "Tra cứu nội bộ" hỗ trợ gom menu phụ theo vai trò -->
+            <div class="relative hidden" id="nav-more">
+              <button type="button" class="nav-tab-btn" id="nav-more-toggle" onclick="toggleNavMore()"
+                      aria-haspopup="true" aria-expanded="false"
+                      title="Sổ và danh mục tra cứu nội bộ: khách hàng, danh mục máy, máy đã đăng ký">
+                <i data-lucide="folder-search" class="w-4 h-4 shrink-0"></i>
+                <span class="nav-label">Tra cứu nội bộ</span>
+                <i data-lucide="chevron-down" class="w-3.5 h-3.5 ml-auto"></i>
+              </button>
+              <div id="nav-more-panel" class="nav-more-panel hidden"></div>
+            </div>
+          </nav>
         </div>
       </div>
 
-      <details class="glass-panel rounded-2xl border border-slate-800 p-5">
-        <summary class="section-title">
-          <i data-lucide="book-open" class="w-4 h-4 text-purple-400"></i> Quy tắc nghiệp vụ &amp; quy trình xử lý phiếu
-          <span class="text-[11px] font-normal text-slate-400 ml-2">(bấm để xem)</span>
-        </summary>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-3 mt-4 text-xs">
-          <div class="p-3 bg-slate-900/80 rounded-xl border border-slate-800">
-            <div class="font-bold text-cyan-300 mb-1">1. Số sê-ri phải tồn tại trong hệ thống</div>
-            <p class="text-slate-400 text-[11px]">Nếu không tìm thấy số sê-ri, hệ thống dừng ngay và không tạo phiếu.</p>
-          </div>
-          <div class="p-3 bg-slate-900/80 rounded-xl border border-slate-800">
-            <div class="font-bold text-cyan-300 mb-1">2. Sản phẩm còn trong thời hạn bảo hành</div>
-            <p class="text-slate-400 text-[11px]">Ngày hết hạn bảo hành phải lớn hơn hoặc bằng ngày tiếp nhận.</p>
-          </div>
-          <div class="p-3 bg-slate-900/80 rounded-xl border border-slate-800">
-            <div class="font-bold text-cyan-300 mb-1">3. Không tạo trùng phiếu đang xử lý</div>
-            <p class="text-slate-400 text-[11px]">Một thiết bị chỉ có một phiếu ở trạng thái đã tiếp nhận, đang kiểm tra hoặc đang sửa chữa.</p>
-          </div>
-          <div class="p-3 bg-slate-900/80 rounded-xl border border-slate-800">
-            <div class="font-bold text-cyan-300 mb-1">4. Đúng chủ sở hữu &amp; phải có lý do khi từ chối</div>
-            <p class="text-slate-400 text-[11px]">Người yêu cầu phải là chủ sở hữu thiết bị; khi từ chối bảo hành bắt buộc nhập lý do.</p>
+      <!-- Chân sidebar: Nút thu gọn menu cho desktop -->
+      <div class="p-3 border-t border-slate-800 hidden lg:block shrink-0">
+        <button type="button" class="w-full flex items-center justify-center gap-2 p-2 rounded-xl text-xs font-semibold text-slate-400 hover:text-white hover:bg-slate-800 transition-colors" onclick="toggleSidebarCollapse()" id="btn-collapse-sidebar" title="Thu gọn / mở rộng menu">
+          <i data-lucide="panel-left-close" class="w-4 h-4 shrink-0" id="sidebar-collapse-icon"></i>
+          <span class="sidebar-collapse-text">Thu gọn menu</span>
+        </button>
+      </div>
+    </aside>
+
+    <!-- ================= KHU VỰC CHÍNH BÊN PHẢI ================= -->
+    <div id="main-wrapper" class="flex-1 flex flex-col min-w-0 bg-slate-50 min-h-screen">
+      <!-- THANH TRÊN (TOPBAR): Tiêu đề trang, tài khoản và đăng xuất -->
+      <header class="sticky top-0 z-30 h-16 bg-white/95 backdrop-blur-md border-b border-slate-200 px-4 sm:px-6 flex items-center justify-between gap-4 shadow-sm shrink-0">
+        <div class="flex items-center gap-3 min-w-0">
+          <button type="button" class="text-slate-600 hover:text-slate-900 p-2 rounded-xl hover:bg-slate-100 transition-colors" onclick="toggleSidebar()" aria-label="Mở menu">
+            <i data-lucide="menu" class="w-5 h-5"></i>
+          </button>
+          <h1 id="topbar-page-title" class="text-xl sm:text-2xl font-bold text-slate-900 leading-tight truncate">Tổng quan</h1>
+        </div>
+
+        <div class="flex items-center gap-2 sm:gap-3 shrink-0">
+          <button id="btn-goto-tickets" class="btn btn-primary" data-perm="ticket.create" title="Đăng ký máy (nếu chưa có) và tạo phiếu bảo hành">
+            <i data-lucide="file-plus-2" class="w-4 h-4"></i>
+            <span class="hidden sm:inline">Tiếp nhận bảo hành</span>
+          </button>
+
+          <!-- Phiên làm việc hiện tại: tên nhân viên + vai trò + nút đăng xuất -->
+          <div id="session-chip" class="session-chip">
+            <div class="w-8 h-8 rounded-full bg-indigo-50 border border-indigo-200 text-indigo-700 flex items-center justify-center font-bold text-xs shrink-0">
+              <i data-lucide="user" class="w-4 h-4 text-indigo-600"></i>
+            </div>
+            <div class="session-info">
+              <div class="session-name" id="session-name">&ndash;</div>
+              <div class="session-role" id="session-role">&ndash;</div>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm shrink-0" id="btn-logout" title="Đăng xuất khỏi phiên làm việc hiện tại">
+              <i data-lucide="log-out" class="w-3.5 h-3.5"></i> <span class="hidden sm:inline">Thoát</span>
+            </button>
           </div>
         </div>
-        <div class="mt-4 pt-3 border-t border-slate-800/80 flex flex-wrap items-center gap-2 text-xs">
-          <span class="text-slate-400 mr-1">Quy trình xử lý phiếu:</span>
-          <span class="px-2.5 py-1 rounded bg-blue-500/20 text-blue-300 font-semibold">Mới tiếp nhận</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-slate-500"></i>
-          <span class="px-2.5 py-1 rounded bg-amber-500/20 text-amber-300 font-semibold">Đang kiểm tra</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-slate-500"></i>
-          <span class="px-2.5 py-1 rounded bg-purple-500/20 text-purple-300 font-semibold">Đang sửa chữa</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-slate-500"></i>
-          <span class="px-2.5 py-1 rounded bg-cyan-500/20 text-cyan-300 font-semibold">Chờ trả máy</span>
-          <i data-lucide="arrow-right" class="w-3.5 h-3.5 text-slate-500"></i>
-          <span class="px-2.5 py-1 rounded bg-emerald-500/20 text-emerald-300 font-semibold">Hoàn tất</span>
-        </div>
-      </details>
-    </section>
+      </header>
+
+      <!-- NỘI DUNG CHÍNH (co giãn toàn màn hình) -->
+      <main class="flex-1 w-full px-4 sm:px-6 lg:px-8 py-6">
+
+        <!-- ======================= TAB 1: TỔNG QUAN ======================= -->
+        <section id="tab-dashboard" class="tab-content-panel hidden space-y-6">
+
+          <!-- ĐẦU TRANG: Tiêu đề gọn & phạm vi dữ liệu -->
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-1">
+            <div class="min-w-0">
+              <div class="flex items-center gap-2">
+                <h2 class="text-lg font-bold text-slate-900" id="dash-title">Tổng quan</h2>
+                <span class="dash-chip dash-chip-scope hidden" id="dash-scope-chip">–</span>
+                <span class="hidden" id="dash-role-chip">–</span>
+              </div>
+              <p class="text-xs text-slate-500 mt-0.5" id="dash-subtitle">Tình hình tiếp nhận, xử lý và bàn giao thiết bị bảo hành.</p>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <div class="flex items-center gap-1.5" id="dash-view-buttons"></div>
+              <button class="btn btn-secondary btn-sm shrink-0" onclick="loadDashboard(true)">
+                <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Làm mới số liệu
+              </button>
+            </div>
+          </div>
+
+          <!-- 1 HÀNG 4 THẺ SỐ LIỆU: Tổng phiếu, Đang xử lý, Chờ trả máy, Đã trả máy -->
+          <div id="dash-cards" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4"></div>
+
+          <!-- BẢNG CHÍNH: PHIẾU CẦN XỬ LÝ (ƯU TIÊN DIỆN TÍCH LỚN NHẤT) -->
+          <div class="glass-panel p-5">
+            <div class="flex flex-col lg:flex-row lg:items-center justify-between gap-3 mb-4">
+              <div>
+                <h3 class="section-title text-lg" id="dash-active-title">
+                  <i data-lucide="clipboard-list" class="w-5 h-5 text-indigo-600"></i> Phiếu cần xử lý
+                </h3>
+                <p class="text-sm text-slate-500 mt-1">
+                  Danh sách phiếu ưu tiên xử lý, gộp cảnh báo và hành động tiếp theo theo đúng quyền hạn.
+                </p>
+              </div>
+
+              <!-- Thanh tìm kiếm nhanh & chuyển trang -->
+              <div class="flex items-center gap-2 flex-wrap">
+                <div class="relative w-64 sm:w-72">
+                  <input type="text" id="dash-table-search" placeholder="Tìm mã phiếu, serial, khách hàng..."
+                         class="glass-input text-sm w-full" oninput="filterDashTable()" onkeyup="if(event.key==='Enter') filterDashTable()">
+                </div>
+                <button class="btn btn-secondary btn-sm" onclick="openTicketsFiltered('')">
+                  <i data-lucide="arrow-right" class="w-4 h-4"></i> Xem tất cả phiếu
+                </button>
+              </div>
+            </div>
+
+            <!-- Bộ lọc trạng thái nhanh của bảng -->
+            <div class="flex flex-wrap items-center gap-2 mb-4 pb-3 border-b border-slate-100" id="dash-status-filters">
+              <span class="text-xs font-semibold text-slate-500 uppercase tracking-wider mr-1">Lọc nhanh:</span>
+              <button class="btn btn-primary btn-sm dash-filter-btn" data-dash-filter="ALL" onclick="setDashFilterStatus('ALL')">Tất cả</button>
+              <button class="btn btn-secondary btn-sm dash-filter-btn" data-dash-filter="PROCESSING" onclick="setDashFilterStatus('PROCESSING')">Đang xử lý</button>
+              <button class="btn btn-secondary btn-sm dash-filter-btn" data-dash-filter="RECEIVED" onclick="setDashFilterStatus('RECEIVED')">Tiếp nhận</button>
+              <button class="btn btn-secondary btn-sm dash-filter-btn" data-dash-filter="INSPECTING" onclick="setDashFilterStatus('INSPECTING')">Kiểm tra</button>
+              <button class="btn btn-secondary btn-sm dash-filter-btn" data-dash-filter="REPAIRING" onclick="setDashFilterStatus('REPAIRING')">Sửa chữa</button>
+              <button class="btn btn-secondary btn-sm dash-filter-btn" data-dash-filter="WAITING_RETURN" onclick="setDashFilterStatus('WAITING_RETURN')">Chờ trả máy</button>
+              <button class="btn btn-secondary btn-sm dash-filter-btn" data-dash-filter="RETURNED" onclick="setDashFilterStatus('RETURNED')">Đã trả máy</button>
+              <span id="dash-filter-count" class="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700 ml-auto hidden"></span>
+            </div>
+
+            <div class="overflow-x-auto rounded-xl border border-slate-200">
+              <table class="w-full min-w-[960px] text-left border-collapse">
+                <thead>
+                  <tr>
+                    <th class="table-th">Mã phiếu</th>
+                    <th class="table-th">Khách hàng</th>
+                    <th class="table-th">Thiết bị / Số sê-ri</th>
+                    <th class="table-th">Trạng thái</th>
+                    <th class="table-th">KTV phụ trách</th>
+                    <th class="table-th" id="dash-active-last-col">Việc cần làm</th>
+                    <th class="table-th text-right">Thao tác</th>
+                  </tr>
+                </thead>
+                <tbody id="dash-active-body">
+                  <tr><td class="table-msg" colspan="7">Đang tải dữ liệu...</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+        </section>
 
     <!-- ======================= TAB 2: TRA CỨU BẢO HÀNH ======================= -->
     <section id="tab-lookup" class="tab-content-panel hidden space-y-4">
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
-        <h2 class="section-title mb-1"><i data-lucide="search-check" class="w-4 h-4 text-emerald-400"></i> Tra cứu bảo hành</h2>
-        <p class="text-xs text-slate-400 mb-4">
-          Nhập <strong class="text-slate-200">số sê-ri</strong> của thiết bị để xem tình trạng bảo hành,
-          hoặc nhập <strong class="text-slate-200">mã phiếu</strong> (bắt đầu bằng <span class="font-mono">TK-</span>) để xem phiếu đang xử lý đến đâu.
+      <div class="glass-panel rounded-2xl p-6">
+        <h2 class="section-title mb-1"><i data-lucide="search-check" class="w-5 h-5 text-emerald-600"></i> Tra cứu bảo hành</h2>
+        <p class="text-sm text-slate-500 mb-4">
+          Nhập <strong class="text-slate-800">số sê-ri</strong> của thiết bị để xem tình trạng bảo hành,
+          hoặc nhập <strong class="text-slate-800">mã phiếu</strong> (bắt đầu bằng <span class="font-mono text-indigo-700">TK-</span>) để xem phiếu đang xử lý đến đâu.
         </p>
 
         <div class="flex flex-col sm:flex-row gap-2">
-          <input type="text" id="lookup-input" placeholder="Ví dụ: SN-ASUS-VALID-01 hoặc TK-INIT-OPEN-001"
-                 class="glass-input px-3 py-2 rounded-xl text-sm flex-1 font-mono" onkeyup="if(event.key==='Enter') runLookup()">
+          <input type="text" id="lookup-input" placeholder="Ví dụ: SN-ASUS-2026-1001 hoặc TK-20261027-1001"
+                 class="glass-input px-3 py-2 rounded-xl text-base flex-1 font-mono" onkeyup="if(event.key==='Enter') runLookup()">
           <button class="btn btn-primary" onclick="runLookup()"><i data-lucide="search" class="w-4 h-4"></i> Tra cứu</button>
           <button class="btn btn-secondary" onclick="clearLookup()"><i data-lucide="eraser" class="w-4 h-4"></i> Xoá kết quả</button>
         </div>
-        <p class="text-[11px] text-slate-500 mt-2">
+        <p class="text-xs text-slate-500 mt-2">
           Số sê-ri là dãy ký tự in trên tem của máy (ví dụ <span class="font-mono">SN-2026-000123</span>).
           Nếu khách không mang máy, hãy tra theo mã phiếu in trên giấy hẹn.
         </p>
 
         <div class="mt-3 flex flex-wrap items-center gap-2">
-          <span class="text-[11px] text-slate-500">Thiết bị đang quản lý:</span>
+          <span class="text-xs text-slate-500 font-semibold">Thiết bị đang quản lý:</span>
           <span id="lookup-samples" class="flex flex-wrap gap-2"></span>
         </div>
       </div>
@@ -341,17 +344,17 @@
 
     <!-- ======================= TAB 3: KHÁCH HÀNG ======================= -->
     <section id="tab-customers" class="tab-content-panel hidden space-y-4">
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
+      <div class="glass-panel rounded-2xl p-6">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
-            <h2 class="section-title"><i data-lucide="users" class="w-4 h-4 text-cyan-400"></i> Danh sách khách hàng</h2>
-            <p class="text-xs text-slate-400 mt-1">
+            <h2 class="section-title"><i data-lucide="users" class="w-5 h-5 text-cyan-600"></i> Danh sách khách hàng</h2>
+            <p class="text-sm text-slate-500 mt-1">
               Sổ khách hàng: thêm khách mới, cập nhật số điện thoại / địa chỉ, và xem mỗi khách đang gửi những máy nào.
             </p>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
             <input type="text" id="customer-search-input" placeholder="Tìm theo tên hoặc số điện thoại..."
-                   class="glass-input px-3 py-2 rounded-xl text-sm w-56" onkeyup="if(event.key==='Enter') searchCustomers()">
+                   class="glass-input px-3 py-2 rounded-xl text-sm w-64" onkeyup="if(event.key==='Enter') searchCustomers()">
             <button class="btn btn-secondary" onclick="searchCustomers()"><i data-lucide="search" class="w-4 h-4"></i> Tìm</button>
             <button class="btn btn-secondary" onclick="loadCustomers()"><i data-lucide="refresh-cw" class="w-4 h-4"></i> Làm mới</button>
             <button class="btn btn-primary" data-perm="customer.create" onclick="openCustomerModal()"><i data-lucide="user-plus" class="w-4 h-4"></i> Thêm khách hàng</button>
@@ -380,17 +383,17 @@
 
     <!-- ======================= TAB 4: DANH MỤC MÁY ======================= -->
     <section id="tab-products" class="tab-content-panel hidden space-y-4">
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
+      <div class="glass-panel rounded-2xl p-6">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
-            <h2 class="section-title"><i data-lucide="package" class="w-4 h-4 text-indigo-400"></i> Danh mục máy</h2>
-            <p class="text-xs text-slate-400 mt-1">
+            <h2 class="section-title"><i data-lucide="package" class="w-5 h-5 text-indigo-600"></i> Danh mục máy</h2>
+            <p class="text-sm text-slate-500 mt-1">
               Khai báo sẵn từng dòng máy và thời hạn bảo hành mặc định. Dùng khi đăng ký máy mới mà chưa có tên máy trong danh sách.
             </p>
           </div>
-          <div class="flex items-center gap-2">
+          <div class="flex items-center gap-2 flex-wrap">
             <input type="text" id="product-search-input" placeholder="Tìm theo tên máy / hãng / nhóm sản phẩm..."
-                   class="glass-input px-3 py-2 rounded-xl text-sm w-60" onkeyup="if(event.key==='Enter') searchProducts()">
+                   class="glass-input px-3 py-2 rounded-xl text-sm w-64" onkeyup="if(event.key==='Enter') searchProducts()">
             <button class="btn btn-secondary" onclick="searchProducts()"><i data-lucide="search" class="w-4 h-4"></i> Tìm</button>
             <button class="btn btn-secondary" onclick="loadProducts()"><i data-lucide="refresh-cw" class="w-4 h-4"></i> Làm mới</button>
             <button class="btn btn-primary" data-perm="product.manage" onclick="openProductModal()"><i data-lucide="plus" class="w-4 h-4"></i> Thêm dòng máy</button>
@@ -418,17 +421,17 @@
 
     <!-- ======================= TAB 5: MÁY ĐÃ ĐĂNG KÝ ======================= -->
     <section id="tab-devices" class="tab-content-panel hidden space-y-4">
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
+      <div class="glass-panel rounded-2xl p-6">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
-            <h2 class="section-title"><i data-lucide="hard-drive" class="w-4 h-4 text-cyan-400"></i> Máy đã đăng ký</h2>
-            <p class="text-xs text-slate-400 mt-1">
+            <h2 class="section-title"><i data-lucide="hard-drive" class="w-5 h-5 text-cyan-600"></i> Máy đã đăng ký</h2>
+            <p class="text-sm text-slate-500 mt-1">
               Mỗi dòng là một máy theo số sê-ri, gắn với một dòng máy và một chủ sở hữu. Dùng khi cần rà soát máy hoặc kiểm tra hạn bảo hành.
             </p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
             <input type="text" id="device-search-input" placeholder="Tìm theo số sê-ri / tên máy..."
-                   class="glass-input px-3 py-2 rounded-xl text-sm w-60" onkeyup="if(event.key==='Enter') searchDevices()">
+                   class="glass-input px-3 py-2 rounded-xl text-sm w-64" onkeyup="if(event.key==='Enter') searchDevices()">
             <button class="btn btn-secondary" onclick="searchDevices()"><i data-lucide="search" class="w-4 h-4"></i> Tìm</button>
             <button class="btn btn-secondary" onclick="loadDevices()"><i data-lucide="refresh-cw" class="w-4 h-4"></i> Làm mới</button>
             <button class="btn btn-secondary" onclick="switchTab('lookup')"><i data-lucide="search-check" class="w-4 h-4"></i> Tra cứu bảo hành</button>
@@ -456,9 +459,9 @@
         </div>
       </div>
 
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
+      <div class="glass-panel rounded-2xl p-4">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-          <p class="text-xs text-slate-400">Cần biết thiết bị còn hạn bảo hành hay không? Hãy dùng màn hình <strong class="text-slate-200">Tra cứu bảo hành</strong> (nhập số sê-ri) hoặc bấm <strong class="text-slate-200">Chi tiết</strong> trên từng thiết bị.</p>
+          <p class="text-sm text-slate-600">Cần biết thiết bị còn hạn bảo hành hay không? Hãy dùng màn hình <strong class="text-slate-800">Tra cứu bảo hành</strong> (nhập số sê-ri) hoặc bấm <strong class="text-slate-800">Chi tiết</strong> trên từng thiết bị.</p>
           <button class="btn btn-secondary btn-sm shrink-0" onclick="switchTab('lookup')"><i data-lucide="search-check" class="w-3.5 h-3.5"></i> Tra cứu bảo hành</button>
         </div>
       </div>
@@ -467,14 +470,14 @@
     <!-- ======================= TAB 6: PHIẾU BẢO HÀNH ======================= -->
     <section id="tab-tickets" class="tab-content-panel hidden space-y-4">
 
-      <!-- Chỉ vai trò có quyền "ticket.create" (Quản lý / Nhân viên tiếp nhận) mới thấy khu tiếp nhận máy mới.
+      <!-- Chỉ vai trò có quyền "ticket.create" (Quản lý / Nhân viên tiếp nhận) mới thấy khu tiếp nhận bảo hành.
            Kỹ thuật viên vẫn thấy danh sách phiếu để cập nhật tình trạng xử lý. -->
-      <div id="reception-panel" class="glass-panel rounded-2xl p-5 border border-indigo-900/60" data-perm="ticket.create">
+      <div id="reception-panel" class="glass-panel rounded-2xl p-6 border border-indigo-100" data-perm="ticket.create">
         <div class="flex items-start justify-between mb-4 gap-3">
           <div>
-            <h2 class="section-title"><i data-lucide="package-plus" class="w-4 h-4 text-indigo-400"></i> Tiếp nhận máy mới</h2>
-            <p class="text-xs text-slate-400 mt-1">
-              Chỉ 2 bước: <strong class="text-slate-200">chọn hoặc đăng ký thiết bị</strong> rồi <strong class="text-slate-200">xác nhận tiếp nhận</strong>.
+            <h2 class="section-title"><i data-lucide="package-plus" class="w-5 h-5 text-indigo-600"></i> Tiếp nhận bảo hành</h2>
+            <p class="text-sm text-slate-500 mt-1">
+              Chỉ 2 bước: <strong class="text-slate-800">chọn hoặc đăng ký thiết bị</strong> rồi <strong class="text-slate-800">xác nhận tiếp nhận</strong>.
               Hệ thống vẫn tự kiểm tra điều kiện bảo hành trước khi tạo phiếu.
             </p>
           </div>
@@ -485,53 +488,53 @@
           <!-- ============ BƯỚC 1: THIẾT BỊ ============ -->
           <div id="wizard-step1">
             <div class="flex flex-wrap items-center gap-2 mb-3 text-xs">
-              <span class="px-2.5 py-1 rounded-lg bg-indigo-600/30 border border-indigo-400 text-indigo-100 font-semibold">Bước 1: Máy của khách</span>
-              <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-600"></i>
-              <span class="px-2.5 py-1 rounded-lg border border-slate-800 text-slate-500">Bước 2: Ghi nhận lỗi &amp; tạo phiếu</span>
+              <span class="px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 font-semibold">Bước 1: Máy của khách</span>
+              <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-400"></i>
+              <span class="px-2.5 py-1 rounded-lg border border-slate-200 text-slate-400">Bước 2: Ghi nhận lỗi &amp; tạo phiếu</span>
             </div>
 
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-3">
               <div class="lg:col-span-2">
-                <label class="form-label" for="wiz-serial">Số sê-ri thiết bị <span class="text-rose-400">*</span></label>
+                <label class="form-label" for="wiz-serial">Số sê-ri thiết bị <span class="text-rose-500">*</span></label>
                 <div class="flex gap-2">
-                  <input type="text" id="wiz-serial" class="w-full glass-input px-3 py-2 rounded-xl text-sm font-mono"
-                         placeholder="Ví dụ: SN-ASUS-VALID-01" onkeyup="if(event.key==='Enter') wizardLookupSerial()">
+                  <input type="text" id="wiz-serial" class="w-full glass-input px-3 py-2 rounded-xl text-base font-mono"
+                         placeholder="Ví dụ: SN-ASUS-2026-1001" onkeyup="if(event.key==='Enter') wizardLookupSerial()">
                   <button type="button" class="btn btn-secondary shrink-0" onclick="wizardLookupSerial()"><i data-lucide="search-check" class="w-4 h-4"></i> Tra thiết bị</button>
                 </div>
                 <span class="form-error hidden" id="err-wiz-serial"></span>
               </div>
-              <div class="text-[11px] text-slate-500 self-end">
-                Máy <strong class="text-slate-300">đã có</strong> trong hệ thống: hiện ngay tình trạng bảo hành và đi tiếp.
-                Máy <strong class="text-slate-300">chưa có</strong>: điền thông tin đăng ký hiện ra bên dưới.
+              <div class="text-xs text-slate-500 self-end">
+                Máy <strong class="text-slate-800">đã có</strong> trong hệ thống: hiện ngay tình trạng bảo hành và đi tiếp.
+                Máy <strong class="text-slate-800">chưa có</strong>: điền thông tin đăng ký hiện ra bên dưới.
               </div>
             </div>
 
             <div class="mt-3 flex flex-wrap items-center gap-2">
-              <span class="text-[11px] text-slate-500">Chọn nhanh máy đang có (bấm để điền số sê-ri):</span>
+              <span class="text-xs text-slate-500 font-semibold">Chọn nhanh máy đang có (bấm để điền số sê-ri):</span>
               <span id="wiz-samples" class="flex flex-wrap gap-2"></span>
             </div>
 
             <div id="wiz-device-result" class="mt-3"></div>
 
-            <div id="wiz-new-device" class="hidden mt-3 p-4 rounded-xl border border-indigo-900/60 bg-slate-900/50">
-              <div class="text-xs font-semibold text-slate-200 mb-3 flex items-center gap-1.5">
-                <i data-lucide="package-plus" class="w-3.5 h-3.5 text-indigo-400"></i> Đăng ký máy mới
+            <div id="wiz-new-device" class="hidden mt-3 p-4 rounded-xl border border-indigo-100 bg-indigo-50/40">
+              <div class="text-xs font-semibold text-slate-900 mb-3 flex items-center gap-1.5">
+                <i data-lucide="package-plus" class="w-4 h-4 text-indigo-600"></i> Đăng ký máy mới
               </div>
               <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 text-xs">
                 <div>
-                  <label class="form-label" for="wiz-customer-id">Khách hàng (chủ sở hữu) <span class="text-rose-400">*</span></label>
+                  <label class="form-label" for="wiz-customer-id">Khách hàng (chủ sở hữu) <span class="text-rose-500">*</span></label>
                   <select id="wiz-customer-id" class="w-full glass-input px-3 py-2 rounded-xl text-sm">
                     <option value="">-- Chọn khách hàng --</option>
                   </select>
                   <span class="form-error hidden" id="err-wiz-customer"></span>
                 </div>
                 <div>
-                  <label class="form-label" for="wiz-product-name">Dòng máy <span class="text-rose-400">*</span></label>
+                  <label class="form-label" for="wiz-product-name">Dòng máy <span class="text-rose-500">*</span></label>
                   <input type="text" id="wiz-product-name" list="list-product-names" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Chọn hoặc nhập tên máy">
                   <span class="form-error hidden" id="err-wiz-product"></span>
                 </div>
                 <div>
-                  <label class="form-label" for="wiz-purchase-date">Ngày mua <span class="text-rose-400">*</span></label>
+                  <label class="form-label" for="wiz-purchase-date">Ngày mua <span class="text-rose-500">*</span></label>
                   <input type="date" id="wiz-purchase-date" class="w-full glass-input px-3 py-2 rounded-xl text-sm font-mono" onchange="recalcWizardEndDate()">
                   <span class="form-error hidden" id="err-wiz-purchase"></span>
                 </div>
@@ -550,7 +553,7 @@
               </div>
               <div class="mt-3 flex flex-wrap items-center gap-2">
                 <button type="button" class="btn btn-primary" onclick="wizardSaveDevice()"><i data-lucide="save" class="w-4 h-4"></i> Lưu thiết bị &amp; tiếp tục</button>
-                <span id="wiz-end-date" class="text-[11px] text-slate-400"></span>
+                <span id="wiz-end-date" class="text-xs text-slate-500"></span>
               </div>
             </div>
           </div>
@@ -558,28 +561,48 @@
           <!-- ============ BƯỚC 2: PHIẾU BẢO HÀNH ============ -->
           <div id="wizard-step2" class="hidden">
             <div class="flex flex-wrap items-center gap-2 mb-3 text-xs">
-              <span class="px-2.5 py-1 rounded-lg bg-emerald-950/40 border border-emerald-700/60 text-emerald-200">Bước 1: Máy của khách (xong)</span>
-              <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-600"></i>
-              <span class="px-2.5 py-1 rounded-lg bg-indigo-600/30 border border-indigo-400 text-indigo-100 font-semibold">Bước 2: Ghi nhận lỗi &amp; tạo phiếu</span>
+              <span class="px-2.5 py-1 rounded-lg bg-emerald-50 border border-emerald-200 text-emerald-700 font-semibold">Bước 1: Máy của khách (xong)</span>
+              <i data-lucide="chevron-right" class="w-3.5 h-3.5 text-slate-400"></i>
+              <span class="px-2.5 py-1 rounded-lg bg-indigo-50 border border-indigo-200 text-indigo-700 font-semibold">Bước 2: Ghi nhận lỗi &amp; tạo phiếu</span>
             </div>
 
             <div id="wiz-preview" class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs mb-3"></div>
 
             <div class="grid grid-cols-1 lg:grid-cols-3 gap-3 text-xs">
               <div class="lg:col-span-2">
-                <label class="form-label" for="wiz-desc">Mô tả tình trạng lỗi của khách hàng <span class="text-rose-400">*</span></label>
-                <textarea id="wiz-desc" rows="3" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Ví dụ: Máy không lên nguồn, đèn báo nhấp nháy màu đỏ khi cắm sạc"></textarea>
+                <label class="form-label" for="wiz-desc">Mô tả tình trạng lỗi của khách hàng <span class="text-rose-500">*</span></label>
+                <div class="flex gap-2 items-start">
+                  <textarea id="wiz-desc" rows="3" class="w-full glass-input px-3 py-2 rounded-xl text-base" placeholder="Ví dụ: Máy không lên nguồn, đèn báo nhấp nháy màu đỏ khi cắm sạc"></textarea>
+                  <button type="button" class="btn btn-secondary shrink-0" id="btn-wiz-ai-suggest" onclick="wizardSuggestCategory()">
+                    <i data-lucide="wand-2" class="w-4 h-4 text-purple-600"></i> Gợi ý nhóm lỗi (AI)
+                  </button>
+                </div>
                 <span class="form-error hidden" id="err-wiz-desc"></span>
-                <p class="text-[11px] text-slate-500 mt-1">Trường có dấu <span class="text-rose-400">*</span> là bắt buộc. Ghi càng cụ thể càng dễ xác định loại lỗi.</p>
+                <div id="wiz-ai-hint" class="hidden mt-1.5 p-2 rounded-lg bg-purple-50 border border-purple-200 text-xs text-purple-900 flex items-start gap-1.5">
+                  <i data-lucide="sparkles" class="w-4 h-4 text-purple-600 shrink-0 mt-0.5"></i>
+                  <span id="wiz-ai-hint-text"></span>
+                </div>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+                  <div>
+                    <label class="form-label" for="wiz-condition">Tình trạng ngoại quan</label>
+                    <input type="text" id="wiz-condition" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Ví dụ: Thân máy trầy nhẹ, màn hình nguyên vẹn">
+                  </div>
+                  <div>
+                    <label class="form-label" for="wiz-accessories">Phụ kiện nhận kèm</label>
+                    <input type="text" id="wiz-accessories" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Ví dụ: Củ sạc 90W theo máy, cáp sạc, túi chống sốc">
+                  </div>
+                </div>
+                <p class="text-xs text-slate-500 mt-2">Trường có dấu <span class="text-rose-500">*</span> là bắt buộc. Ghi càng cụ thể càng dễ xác định loại lỗi.</p>
               </div>
               <div>
-                <label class="form-label" for="wiz-created-by">Người tiếp nhận <span class="text-rose-400">*</span></label>
+                <label class="form-label" for="wiz-created-by">Người tiếp nhận <span class="text-rose-500">*</span></label>
                 <select id="wiz-created-by" class="w-full glass-input px-3 py-2 rounded-xl text-sm"></select>
                 <span class="form-error hidden" id="err-wiz-created-by"></span>
-                <label class="form-label mt-2" for="wiz-category-select">Loại lỗi (không bắt buộc)</label>
+                <label class="form-label mt-2" for="wiz-category-select">Nhóm lỗi (không bắt buộc)</label>
                 <select id="wiz-category-select" class="w-full glass-input px-3 py-2 rounded-xl text-sm">
                   <option value="">-- Chưa xác định (để hệ thống gợi ý) --</option>
                 </select>
+                <p class="text-xs text-slate-400 mt-1">Bấm "Gợi ý nhóm lỗi (AI)" để điền tự động.</p>
               </div>
             </div>
 
@@ -587,38 +610,45 @@
               <button type="button" class="btn btn-primary" onclick="wizardSubmitTicket()"><i data-lucide="save" class="w-4 h-4"></i> Xác nhận tiếp nhận &amp; tạo phiếu</button>
               <button type="button" class="btn btn-secondary" onclick="wizardBackToStep1()"><i data-lucide="arrow-left" class="w-4 h-4"></i> Quay lại bước 1</button>
               <button type="button" class="btn btn-secondary" onclick="wizardReset()"><i data-lucide="eraser" class="w-4 h-4"></i> Nhập lại từ đầu</button>
-              <span class="text-[11px] text-slate-500">Phiếu mới sẽ ở trạng thái "Đã tiếp nhận".</span>
+              <span class="text-xs text-slate-500">Phiếu mới sẽ ở trạng thái "Tiếp nhận".</span>
             </div>
           </div>
         </div>
       </div>
 
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800" id="ticket-list-panel">
+      <div class="glass-panel rounded-2xl p-6" id="ticket-list-panel">
         <div class="flex flex-col lg:flex-row lg:items-start justify-between gap-3 mb-4">
           <div>
-            <h2 class="section-title"><i data-lucide="file-text" class="w-4 h-4 text-cyan-400"></i> Danh sách phiếu bảo hành</h2>
-            <p class="text-xs text-slate-400 mt-1">
-              Mỗi phiếu là một lượt khách gửi máy. Bấm <strong class="text-slate-200">mã phiếu</strong> để xem chi tiết, lịch sử xử lý và chuyển bước tiếp theo.
+            <h2 class="section-title"><i data-lucide="file-text" class="w-5 h-5 text-indigo-600"></i> Danh sách phiếu bảo hành</h2>
+            <p class="text-sm text-slate-500 mt-1">
+              Mỗi phiếu là một lượt khách gửi máy. Bấm <strong class="text-slate-800">mã phiếu</strong> để xem chi tiết, lịch sử xử lý và chuyển bước tiếp theo.
             </p>
           </div>
           <div class="flex items-center gap-2 flex-wrap">
             <input type="text" id="ticket-search-input" placeholder="Tìm theo mã phiếu / số sê-ri / tên khách hàng / số điện thoại"
                    class="glass-input px-3 py-2 rounded-xl text-sm w-80" oninput="filterTickets()" onkeyup="if(event.key==='Enter') searchTicketByCode()">
-            <button class="btn btn-secondary" onclick="searchTicketByCode()"><i data-lucide="search" class="w-4 h-4"></i> Tra cứu mã phiếu</button>
-            <button class="btn btn-secondary" id="ticket-my-filter" onclick="toggleMyTickets()" title="Chỉ hiện phiếu mà bạn là người xử lý gần nhất"><i data-lucide="user-check" class="w-4 h-4"></i> Phiếu của tôi</button>
+            <button class="btn btn-secondary" onclick="searchTicketByCode()"><i data-lucide="search" class="w-4 h-4"></i> Tra cứu</button>
+            <div class="inline-flex rounded-xl p-1 bg-slate-100 border border-slate-200" id="ticket-scope-toggle-group">
+              <button type="button" class="btn btn-sm btn-primary rounded-lg transition-all" id="btn-scope-mine" onclick="setTicketScope(true)">
+                <i data-lucide="user-check" class="w-3.5 h-3.5"></i> <span id="label-scope-mine">Phiếu được giao</span>
+              </button>
+              <button type="button" class="btn btn-sm btn-secondary rounded-lg transition-all" id="btn-scope-all" onclick="setTicketScope(false)">
+                <i data-lucide="building" class="w-3.5 h-3.5"></i> <span id="label-scope-all">Toàn trung tâm — chỉ xem</span>
+              </button>
+            </div>
             <button class="btn btn-secondary" onclick="loadTickets()"><i data-lucide="refresh-cw" class="w-4 h-4"></i> Làm mới</button>
           </div>
         </div>
 
         <div class="flex flex-wrap items-center gap-2 mb-3" id="ticket-status-filters">
-          <span class="text-[11px] text-slate-500 mr-1">Lọc theo trạng thái:</span>
+          <span class="text-xs text-slate-500 font-semibold mr-1">Lọc theo trạng thái:</span>
           <button class="btn btn-secondary btn-sm filter-status-btn" data-status="ALL">Tất cả</button>
-          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="RECEIVED">Mới tiếp nhận</button>
-          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="INSPECTING">Đang kiểm tra</button>
-          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="REPAIRING">Đang sửa chữa</button>
-          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="WAITING_RETURN">Chờ trả máy</button>
-          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="COMPLETED">Đã hoàn tất</button>
-          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="REJECTED">Từ chối bảo hành</button>
+          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="RECEIVED">Tiếp nhận</button>
+          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="INSPECTING">Kiểm tra</button>
+          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="REPAIRING">Sửa chữa</button>
+          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="COMPLETED">Hoàn tất</button>
+          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="REJECTED">Từ chối</button>
+          <button class="btn btn-secondary btn-sm filter-status-btn" data-status="RETURNED">Đã trả máy</button>
         </div>
 
         <div class="overflow-x-auto">
@@ -626,11 +656,11 @@
             <thead>
               <tr>
                 <th class="table-th">Mã phiếu</th>
-                <th class="table-th">Thiết bị (số sê-ri)</th>
                 <th class="table-th">Khách hàng</th>
+                <th class="table-th">Thiết bị / Số sê-ri</th>
                 <th class="table-th">Trạng thái</th>
+                <th class="table-th">KTV phụ trách</th>
                 <th class="table-th">Ngày tiếp nhận</th>
-                <th class="table-th">Nhân viên phụ trách</th>
                 <th class="table-th">Loại lỗi</th>
                 <th class="table-th text-right">Thao tác</th>
               </tr>
@@ -645,17 +675,17 @@
 
     <!-- ======================= TAB 7: HỖ TRỢ XÁC ĐỊNH LỖI ======================= -->
     <section id="tab-ai" class="tab-content-panel hidden space-y-4">
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
+      <div class="glass-panel rounded-2xl p-6">
         <div class="mb-4">
-          <h2 class="section-title"><i data-lucide="wand-2" class="w-4 h-4 text-fuchsia-400"></i> Hỗ trợ xác định lỗi</h2>
-          <p class="text-xs text-slate-400 mt-1">
+          <h2 class="section-title"><i data-lucide="wand-2" class="w-5 h-5 text-purple-600"></i> Hỗ trợ xác định lỗi</h2>
+          <p class="text-sm text-slate-500 mt-1">
             Hệ thống đọc mô tả sự cố của khách và gợi ý loại lỗi để nhân viên tham khảo.
             Kết quả chỉ được ghi vào phiếu sau khi nhân viên tiếp nhận hoặc quản lý xác nhận.
           </p>
-          <p class="text-[11px] text-slate-500 mt-2">
-            3 bước: <strong class="text-slate-300">1)</strong> chọn phiếu đang xử lý →
-            <strong class="text-slate-300">2)</strong> bấm <strong class="text-slate-300">Gợi ý loại lỗi</strong> →
-            <strong class="text-slate-300">3)</strong> chọn người xác nhận và bấm <strong class="text-slate-300">Xác nhận loại lỗi</strong>.
+          <p class="text-xs text-slate-500 mt-2">
+            3 bước: <strong class="text-slate-800">1)</strong> chọn phiếu đang xử lý &rarr;
+            <strong class="text-slate-800">2)</strong> bấm <strong class="text-slate-800">Gợi ý loại lỗi</strong> &rarr;
+            <strong class="text-slate-800">3)</strong> chọn người xác nhận và bấm <strong class="text-slate-800">Xác nhận loại lỗi</strong>.
           </p>
         </div>
 
@@ -671,11 +701,11 @@
           </div>
         </div>
 
-        <div id="ai-result-box" class="rounded-xl border border-slate-800 bg-slate-900/60 p-4 text-xs space-y-2">
+        <div id="ai-result-box" class="rounded-xl border border-slate-200 bg-slate-50 p-4 text-sm text-slate-700 space-y-2">
           Chọn một phiếu bảo hành và bấm "Gợi ý loại lỗi" để xem kết quả.
         </div>
 
-        <!-- Chỉ Quản lý / Nhân viên tiếp nhận có quyền "ai.review" mới thấy ô xác nhận kết quả gợi ý. -->
+        <!-- Chỉ Quản lý / Kỹ thuật viên phụ trách có quyền "ai.review" mới thấy ô xác nhận kết quả gợi ý. -->
         <div class="grid grid-cols-1 md:grid-cols-3 gap-3 mt-4 items-end" data-perm="ai.review">
           <div class="md:col-span-2">
             <label class="form-label" for="ai-reviewer-select">Người xác nhận</label>
@@ -686,11 +716,11 @@
             <button class="btn btn-danger flex-1 justify-center" onclick="submitAiReview('REJECTED')"><i data-lucide="x-circle" class="w-4 h-4"></i> Không dùng gợi ý</button>
           </div>
         </div>
-        <p class="text-[11px] text-slate-500 mt-2">Chỉ nhân viên tiếp nhận hoặc quản lý có quyền xác nhận. Kỹ thuật viên không có quyền này.</p>
+        <p class="text-xs text-slate-500 mt-2">Xác nhận hoặc từ chối gợi ý nhóm lỗi để áp dụng vào phiếu bảo hành.</p>
       </div>
 
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
-        <h3 class="section-title mb-3"><i data-lucide="history" class="w-4 h-4 text-slate-400"></i> Lịch sử gợi ý loại lỗi của phiếu đang chọn</h3>
+      <div class="glass-panel rounded-2xl p-6">
+        <h3 class="section-title mb-3"><i data-lucide="history" class="w-5 h-5 text-slate-500"></i> Lịch sử gợi ý loại lỗi của phiếu đang chọn</h3>
         <div class="overflow-x-auto">
           <table class="w-full min-w-[720px]">
             <thead>
@@ -713,19 +743,42 @@
     <!-- ======================= TAB 8: TÀI KHOẢN NHÂN VIÊN =======================
          Chỉ vai trò QUẢN LÝ có quyền `user.view` nên chỉ quản lý thấy mục này trên menu. -->
     <section id="tab-accounts" class="tab-content-panel hidden space-y-4">
-      <div class="glass-panel rounded-2xl p-5 border border-slate-800">
+      <div class="glass-panel rounded-2xl p-6">
         <div class="flex flex-col md:flex-row md:items-center justify-between gap-3 mb-4">
           <div>
-            <h2 class="section-title"><i data-lucide="shield-user" class="w-4 h-4 text-purple-400"></i> Tài khoản nhân viên</h2>
-            <p class="text-xs text-slate-400 mt-1">
-              Danh sách tài khoản đang làm việc trong hệ thống kèm vai trò và trung tâm bảo hành.
-              <span class="text-slate-300">Chỉ Quản lý xem được màn hình này</span> — các vai trò khác không thấy mục này.
+            <h2 class="section-title"><i data-lucide="shield-user" class="w-5 h-5 text-purple-600"></i> Tài khoản nhân viên</h2>
+            <p class="text-sm text-slate-500 mt-1">
+              Quản lý danh sách nhân sự, phân quyền vai trò và trạng thái hoạt động của tài khoản.
             </p>
           </div>
           <div class="flex items-center gap-2">
+            <button class="btn btn-primary" data-perm="user.manage" onclick="openAddUserModal()"><i data-lucide="user-plus" class="w-4 h-4"></i> Thêm tài khoản</button>
             <button class="btn btn-secondary" onclick="loadAccounts()"><i data-lucide="refresh-cw" class="w-4 h-4"></i> Làm mới</button>
           </div>
         </div>
+
+        <!-- Thanh tìm kiếm & bộ lọc tài khoản -->
+        <div class="flex flex-col sm:flex-row items-stretch sm:items-center gap-3 mb-4 pb-3 border-b border-slate-100">
+          <div class="relative flex-1">
+            <input type="text" id="account-search-input" placeholder="Tìm theo tên đăng nhập, họ tên, email, SĐT..."
+                   class="glass-input text-sm w-full" oninput="filterAccounts()">
+          </div>
+          <div class="flex items-center gap-2 flex-wrap">
+            <select id="account-role-filter" class="glass-input text-xs px-3 py-2 rounded-xl" onchange="filterAccounts()">
+              <option value="ALL">Tất cả vai trò</option>
+              <option value="MANAGER">Quản lý</option>
+              <option value="RECEPTIONIST">Tiếp nhận</option>
+              <option value="TECHNICIAN">Kỹ thuật viên</option>
+            </select>
+            <select id="account-status-filter" class="glass-input text-xs px-3 py-2 rounded-xl" onchange="filterAccounts()">
+              <option value="ALL">Tất cả trạng thái</option>
+              <option value="ACTIVE">Đang làm việc</option>
+              <option value="LOCKED">Đã khoá</option>
+            </select>
+            <span id="account-count-badge" class="text-xs font-semibold px-2.5 py-1 rounded-full bg-slate-100 text-slate-700"></span>
+          </div>
+        </div>
+
         <div class="overflow-x-auto">
           <table class="w-full min-w-[900px]">
             <thead>
@@ -737,16 +790,14 @@
                 <th class="table-th">Điện thoại</th>
                 <th class="table-th">Trung tâm bảo hành</th>
                 <th class="table-th">Trạng thái tài khoản</th>
+                <th class="table-th text-right">Thao tác</th>
               </tr>
             </thead>
             <tbody id="accounts-table-body">
-              <tr><td class="table-msg" colspan="7">Đang tải dữ liệu...</td></tr>
+              <tr><td class="table-msg" colspan="8">Đang tải dữ liệu...</td></tr>
             </tbody>
           </table>
         </div>
-        <p class="text-[11px] text-slate-500 mt-3">
-          Mật khẩu không bao giờ được hiển thị tại đây. Việc đổi mật khẩu / khoá tài khoản do Quản lý thực hiện qua API quản trị tài khoản.
-        </p>
       </div>
     </section>
 
@@ -755,165 +806,187 @@
   <!-- ==================== MODAL: XỬ LÝ PHIẾU (MỘT MÀN HÌNH) ==================== -->
   <!-- Mọi việc của phiếu nằm ở đây: khách hàng, thiết bị, tiếp nhận, chẩn đoán,
        sửa chữa, trả máy, lịch sử và các nút hành động theo quyền. -->
-  <div id="ticket-modal" class="fixed inset-0 z-50 items-center justify-center bg-black/75 backdrop-blur-sm p-4" style="display:none">
-    <div class="glass-panel rounded-2xl border border-slate-700/80 max-w-6xl w-full p-5 sm:p-6 shadow-2xl relative max-h-[93vh] overflow-y-auto">
-      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg" onclick="closeModal('ticket-modal')">
+  <div id="ticket-modal" class="fixed inset-0 z-50 items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" style="display:none">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-6xl w-full p-5 sm:p-6 shadow-2xl relative max-h-[93vh] overflow-y-auto">
+      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="closeModal('ticket-modal')" aria-label="Đóng">
         <i data-lucide="x" class="w-5 h-5"></i>
       </button>
 
       <!-- ĐẦU PHIẾU: mã phiếu, trạng thái, câu mô tả việc đang ở đâu -->
       <div class="pr-8">
         <div class="flex items-center gap-2 flex-wrap">
-          <h3 class="text-lg font-bold text-white font-mono" id="modal-ticket-code">–</h3>
+          <h3 class="text-xl font-bold text-slate-900 font-mono" id="modal-ticket-code">–</h3>
           <span id="modal-ticket-badge" class="px-3 py-1 text-xs font-semibold rounded-full">–</span>
-          <span id="modal-ai-summary" class="px-2.5 py-1 text-[11px] rounded-full border border-slate-700 text-slate-300">Chưa có gợi ý loại lỗi</span>
-          <span id="modal-handler-chip" class="px-2.5 py-1 text-[11px] rounded-full border border-slate-700 text-slate-300">Nhân viên phụ trách: –</span>
+          <span id="modal-handler-chip" class="px-2.5 py-1 text-xs rounded-full border border-slate-200 text-slate-700 bg-slate-50">Nhân viên phụ trách: –</span>
         </div>
-        <p id="modal-status-hint" class="text-sm text-slate-300 mt-2"></p>
-        <div id="modal-ticket-progress" class="flex items-center gap-1 mt-3 mb-4 text-[11px] flex-wrap"></div>
+        <p id="modal-status-hint" class="text-sm text-slate-600 mt-2"></p>
+        <div id="modal-ticket-progress" class="flex items-center gap-1 mt-3 mb-4 text-xs flex-wrap"></div>
       </div>
 
       <!-- KHỐI HÀNH ĐỘNG: chỉ hiện nút mà tài khoản hiện tại có quyền -->
-      <div class="rounded-xl border border-indigo-900/60 bg-indigo-950/20 p-3 mb-4">
-        <div class="text-xs font-semibold text-indigo-200 mb-2 flex items-center gap-1.5">
-          <i data-lucide="play-circle" class="w-3.5 h-3.5"></i> Việc cần làm tiếp theo
+      <div class="rounded-xl border border-indigo-100 bg-indigo-50/50 p-4 mb-4">
+        <div class="flex items-center justify-between flex-wrap gap-2 mb-2">
+          <div class="text-xs font-bold text-indigo-900 flex items-center gap-1.5 uppercase tracking-wider">
+            <i data-lucide="play-circle" class="w-4 h-4 text-indigo-600"></i> Việc cần làm tiếp theo
+          </div>
+          <div class="flex items-center gap-2">
+            <button type="button" class="btn btn-secondary btn-sm" onclick="showTicketAiHistory()">
+              <i data-lucide="sparkles" class="w-3.5 h-3.5 text-purple-600"></i> Tóm tắt lịch sử (AI)
+            </button>
+            <button type="button" class="btn btn-secondary btn-sm" onclick="showTicketAiNotification()">
+              <i data-lucide="message-square" class="w-3.5 h-3.5 text-indigo-600"></i> Soạn thông báo (AI)
+            </button>
+          </div>
         </div>
         <div id="modal-state-actions" class="flex flex-wrap gap-2"></div>
-        <div id="modal-permission-notes" class="text-[11px] text-amber-200/80 mt-2 space-y-1"></div>
-        <div id="modal-rejection-box" class="hidden mt-3 p-3 rounded-xl border border-rose-600/40 bg-rose-950/40">
-          <div class="text-xs font-semibold text-rose-300 mb-1">Lý do từ chối bảo hành</div>
-          <div class="text-sm text-rose-100" id="modal-rejection-reason">–</div>
+        <div id="modal-permission-notes" class="text-xs text-amber-800 mt-2 space-y-1"></div>
+        <div id="modal-rejection-proposal-box" class="hidden mt-3 p-3.5 rounded-xl border border-amber-200 bg-amber-50 text-amber-900">
+          <div class="text-xs font-bold text-amber-800 mb-1 flex items-center gap-1.5">
+            <i data-lucide="alert-circle" class="w-4 h-4 text-amber-600"></i> Đề xuất từ chối bảo hành (chờ Quản lý duyệt)
+          </div>
+          <div class="text-sm text-amber-900 mb-2" id="modal-rejection-proposal-note">–</div>
+          <div id="modal-rejection-proposal-actions" class="flex flex-wrap gap-2"></div>
+        </div>
+        <div id="modal-rejection-box" class="hidden mt-3 p-3.5 rounded-xl border border-rose-200 bg-rose-50 text-rose-900">
+          <div class="text-xs font-bold text-rose-800 mb-1">Lý do từ chối bảo hành</div>
+          <div class="text-sm text-rose-900" id="modal-rejection-reason">–</div>
         </div>
       </div>
 
       <div class="grid grid-cols-1 lg:grid-cols-3 gap-4 text-xs">
-        <!-- ============ CỘT TRÁI: A -> F (thông tin nghiệp vụ của phiếu) ============ -->
+        <!-- ============ CỘT TRÁI: thông tin nghiệp vụ của phiếu ============ -->
         <div class="lg:col-span-2 space-y-3">
 
-          <!-- A. THÔNG TIN KHÁCH HÀNG + B. THÔNG TIN THIẾT BỊ -->
+          <!-- THÔNG TIN KHÁCH HÀNG + THÔNG TIN THIẾT BỊ -->
           <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
-            <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-              <div class="text-slate-300 font-semibold mb-2 flex items-center gap-1.5">
-                <i data-lucide="user" class="w-3.5 h-3.5 text-cyan-400"></i> A. Khách hàng
+            <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <div class="text-slate-800 font-bold mb-2 flex items-center gap-1.5">
+                <i data-lucide="user" class="w-4 h-4 text-cyan-600"></i> Thông tin khách hàng
               </div>
-              <div class="font-semibold text-slate-100" id="modal-customer">–</div>
-              <div class="text-slate-400 mt-1">Điện thoại: <span class="font-mono text-slate-200" id="modal-customer-phone">–</span></div>
-              <div class="text-slate-400 mt-0.5">Email: <span class="text-slate-200" id="modal-customer-email">–</span></div>
+              <div class="font-semibold text-slate-900 text-sm" id="modal-customer">–</div>
+              <div class="text-slate-600 mt-1">Điện thoại: <span class="font-mono text-slate-800 font-semibold" id="modal-customer-phone">–</span></div>
+              <div class="text-slate-600 mt-0.5">Email: <span class="text-slate-800" id="modal-customer-email">–</span></div>
             </div>
-            <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-              <div class="text-slate-300 font-semibold mb-2 flex items-center gap-1.5">
-                <i data-lucide="hard-drive" class="w-3.5 h-3.5 text-cyan-400"></i> B. Thiết bị
+            <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
+              <div class="text-slate-800 font-bold mb-2 flex items-center gap-1.5">
+                <i data-lucide="hard-drive" class="w-4 h-4 text-indigo-600"></i> Thông tin thiết bị
               </div>
-              <div class="text-slate-400">Số sê-ri: <span class="font-mono font-semibold text-cyan-300" id="modal-serial">–</span></div>
-              <div class="text-slate-400 mt-1">Sản phẩm: <span class="text-slate-200" id="modal-product">–</span></div>
-              <div class="text-slate-400 mt-0.5">Ngày mua: <span class="font-mono text-slate-200" id="modal-purchase-date">–</span></div>
-              <div class="text-slate-400 mt-0.5">Hạn bảo hành: <span class="font-mono text-slate-200" id="modal-warranty-end">–</span></div>
+              <div class="text-slate-600">Số sê-ri: <span class="font-mono font-bold text-indigo-700" id="modal-serial">–</span></div>
+              <div class="text-slate-600 mt-1">Sản phẩm: <span class="text-slate-800 font-medium" id="modal-product">–</span></div>
+              <div class="text-slate-600 mt-0.5">Ngày mua: <span class="font-mono text-slate-800" id="modal-purchase-date">–</span></div>
+              <div class="text-slate-600 mt-0.5">Hạn bảo hành: <span class="font-mono text-slate-800" id="modal-warranty-end">–</span></div>
               <div class="mt-1">Tình trạng bảo hành: <span id="modal-warranty-status">–</span></div>
             </div>
           </div>
 
-          <!-- C. TIẾP NHẬN -->
-          <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-            <div class="text-slate-300 font-semibold mb-2 flex items-center gap-1.5">
-              <i data-lucide="inbox" class="w-3.5 h-3.5 text-blue-400"></i> C. Tiếp nhận
+          <!-- TIẾP NHẬN MÁY -->
+          <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
+            <div class="text-slate-800 font-bold mb-2 flex items-center gap-1.5">
+              <i data-lucide="inbox" class="w-4 h-4 text-blue-600"></i> Tiếp nhận máy
             </div>
-            <div class="text-slate-400">Thời điểm tiếp nhận: <span class="font-mono text-slate-200" id="modal-ticket-created">–</span>
-              &bull; Nhân viên tiếp nhận: <span class="text-slate-200" id="modal-created-by">–</span></div>
-            <div class="text-slate-400 mt-2">Tình trạng/lỗi do khách hàng cung cấp:</div>
-            <div class="text-sm text-slate-100 mt-1 p-2 bg-slate-950/60 rounded-lg border border-slate-800" id="modal-ticket-desc">–</div>
+            <div class="text-slate-600">Thời điểm tiếp nhận: <span class="font-mono text-slate-800 font-semibold" id="modal-ticket-created">–</span>
+              &bull; Nhân viên tiếp nhận: <span class="text-slate-800 font-semibold" id="modal-created-by">–</span></div>
+            <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 mt-2">
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <div class="text-slate-500 font-medium text-xs">Tình trạng ngoại quan:</div>
+                <div class="text-slate-800 text-sm mt-0.5" id="modal-device-condition">–</div>
+              </div>
+              <div class="p-2.5 bg-white rounded-lg border border-slate-200">
+                <div class="text-slate-500 font-medium text-xs">Phụ kiện nhận kèm:</div>
+                <div class="text-slate-800 text-sm mt-0.5" id="modal-accessories">–</div>
+              </div>
+            </div>
           </div>
 
-          <!-- HỖ TRỢ CHẨN ĐOÁN: 3 phần TÁCH BIỆT để không nhầm gợi ý của hệ thống
-               với kết luận của kỹ thuật viên (hệ thống không tự ghi kết luận vào phiếu). -->
-          <div class="p-3 bg-slate-900/70 rounded-xl border border-fuchsia-900/40">
-            <div class="text-slate-300 font-semibold mb-2 flex items-center gap-1.5">
-              <i data-lucide="wand-2" class="w-3.5 h-3.5 text-fuchsia-400"></i> Hỗ trợ chẩn đoán
-            </div>
-            <div class="grid grid-cols-1 md:grid-cols-3 gap-3">
-              <div class="p-2.5 rounded-lg border border-slate-800 bg-slate-950/40">
-                <div class="text-[11px] font-semibold text-slate-400 mb-1">1. Khách hàng mô tả</div>
-                <div class="text-slate-200" id="ws-support-customer">–</div>
+          <!-- KIỂM TRA VÀ CHẨN ĐOÁN (KHU VỰC THỐNG NHẤT) -->
+          <div class="p-4 bg-slate-50 rounded-xl border border-slate-200" id="ws-inspection-section">
+            <div class="flex items-start justify-between gap-2 mb-3">
+              <div class="text-slate-800 font-bold flex items-center gap-1.5 text-sm">
+                <i data-lucide="stethoscope" class="w-4 h-4 text-indigo-600"></i> Kiểm tra và chẩn đoán
               </div>
-              <div class="p-2.5 rounded-lg border border-fuchsia-900/40 bg-slate-950/40">
-                <div class="text-[11px] font-semibold text-fuchsia-300 mb-1">2. Hệ thống gợi ý (chỉ tham khảo)</div>
-                <div class="text-slate-200" id="ws-support-ai">–</div>
-              </div>
-              <div class="p-2.5 rounded-lg border border-emerald-900/40 bg-slate-950/40">
-                <div class="text-[11px] font-semibold text-emerald-300 mb-1">3. Kết luận của kỹ thuật viên</div>
-                <div class="text-slate-200" id="ws-support-conclusion">–</div>
+              <div class="flex items-center gap-2">
+                <button type="button" id="btn-ai-suggest-ticket" class="btn btn-secondary btn-sm" onclick="classifyCurrentTicket()">
+                  <i data-lucide="wand-2" class="w-3.5 h-3.5 text-purple-600"></i> Gợi ý loại lỗi (AI)
+                </button>
+                <button type="button" id="btn-edit-diagnosis" class="btn btn-secondary btn-sm hidden" onclick="openDiagnosisModal()">
+                  <i data-lucide="pencil" class="w-3.5 h-3.5"></i> Ghi nhận chẩn đoán
+                </button>
               </div>
             </div>
-            <p class="text-[11px] text-slate-500 mt-2">
-              Hệ thống chỉ đề xuất loại lỗi để tham khảo; kết luận cuối cùng do nhân viên có quyền xác nhận
-              và không được tự động ghi vào phiếu.
-            </p>
+
+            <!-- 1. Mô tả của khách hàng -->
+            <div class="p-3 rounded-lg border border-slate-200 bg-white mb-3">
+              <div class="text-xs font-semibold text-slate-500 mb-1 flex items-center gap-1">
+                <i data-lucide="message-square" class="w-3.5 h-3.5 text-slate-400"></i> Mô tả của khách hàng
+              </div>
+              <div class="text-slate-900 text-sm leading-relaxed" id="ws-support-customer">–</div>
+              <div class="hidden" id="modal-ticket-desc"></div>
+            </div>
+
+            <!-- 2. Gợi ý tham khảo (AI) - thu gọn nếu đã có kết luận chính thức -->
+            <div id="ws-ai-suggestion-box" class="mb-3">
+              <!-- Rendered dynamically -->
+            </div>
+
+            <!-- 3. Kết luận chính thức của kỹ thuật viên -->
+            <div class="p-3 rounded-lg border border-emerald-200 bg-emerald-50/30">
+              <div class="flex items-center justify-between mb-1.5">
+                <div class="text-xs font-bold text-emerald-800 uppercase tracking-wide flex items-center gap-1">
+                  <i data-lucide="check-circle" class="w-3.5 h-3.5 text-emerald-600"></i> Kết luận chính thức của kỹ thuật viên
+                </div>
+                <div id="ws-official-badge"></div>
+              </div>
+              <div id="ws-diagnosis-body" class="text-slate-900 text-sm font-medium leading-relaxed">–</div>
+              <div id="ws-diagnosis-meta" class="text-slate-500 mt-2 text-xs border-t border-emerald-100 pt-2 flex flex-wrap gap-x-3 gap-y-1"></div>
+            </div>
           </div>
 
-          <!-- D. CHẨN ĐOÁN (kết luận của kỹ thuật viên - khác với gợi ý của AI) -->
-          <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
+          <!-- NỘI DUNG SỬA CHỮA VÀ KẾT QUẢ KIỂM TRA SAU SỬA -->
+          <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
             <div class="flex items-start justify-between gap-2">
-              <div class="text-slate-300 font-semibold flex items-center gap-1.5">
-                <i data-lucide="stethoscope" class="w-3.5 h-3.5 text-amber-400"></i> D. Chẩn đoán – kỹ thuật viên kết luận
-              </div>
-              <button type="button" id="btn-edit-diagnosis" class="btn btn-secondary btn-sm hidden" onclick="openDiagnosisModal()">
-                <i data-lucide="pencil" class="w-3.5 h-3.5"></i> Ghi nhận chẩn đoán
-              </button>
-            </div>
-            <div id="ws-diagnosis-body" class="mt-2 text-slate-200">–</div>
-            <div id="ws-diagnosis-meta" class="text-slate-500 mt-1"></div>
-          </div>
-
-          <!-- E. SỬA CHỮA -->
-          <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-            <div class="flex items-start justify-between gap-2">
-              <div class="text-slate-300 font-semibold flex items-center gap-1.5">
-                <i data-lucide="wrench" class="w-3.5 h-3.5 text-purple-400"></i> E. Sửa chữa
+              <div class="text-slate-800 font-bold flex items-center gap-1.5">
+                <i data-lucide="wrench" class="w-4 h-4 text-purple-600"></i> Nội dung sửa chữa và kiểm tra sau sửa
               </div>
               <button type="button" id="btn-edit-repair" class="btn btn-secondary btn-sm hidden" onclick="openRepairModal()">
                 <i data-lucide="pencil" class="w-3.5 h-3.5"></i> Ghi nhận sửa chữa
               </button>
             </div>
-            <div id="ws-repair-body" class="mt-2 text-slate-200">–</div>
-            <div id="ws-repair-parts" class="text-slate-400 mt-1"></div>
+            <div id="ws-repair-body" class="mt-2 text-slate-800 text-sm">–</div>
+            <div id="ws-repair-parts" class="text-slate-600 mt-1"></div>
             <div id="ws-repair-logs" class="mt-2 space-y-1"></div>
           </div>
 
-          <!-- F. TRẢ MÁY -->
-          <div class="p-3 rounded-xl border" id="ws-handover-box">
-            <div class="text-slate-300 font-semibold mb-1.5 flex items-center gap-1.5">
-              <i data-lucide="handshake" class="w-3.5 h-3.5 text-emerald-400"></i> F. Trả máy
+          <!-- TRẢ MÁY & BÀN GIAO -->
+          <div class="p-4 rounded-xl border border-slate-200 bg-slate-50" id="ws-handover-box">
+            <div class="text-slate-800 font-bold mb-1.5 flex items-center gap-1.5">
+              <i data-lucide="handshake" class="w-4 h-4 text-emerald-600"></i> Trả máy &amp; Bàn giao
             </div>
-            <div id="ws-handover-body" class="text-slate-200">–</div>
+            <div id="ws-handover-body" class="text-slate-800 text-sm">–</div>
           </div>
         </div>
 
-        <!-- ============ CỘT PHẢI: G. LỊCH SỬ + GỢI Ý AI + ĐIỀU KIỆN HOÀN TẤT ============ -->
+        <!-- ============ CỘT PHẢI: ĐIỀU KIỆN TRẢ MÁY + LỊCH SỬ ============ -->
         <div class="space-y-3">
-          <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-            <div class="text-slate-300 font-semibold mb-2 flex items-center gap-1.5">
-              <i data-lucide="history" class="w-3.5 h-3.5 text-indigo-400"></i> G. Lịch sử xử lý
+          <!-- ĐIỀU KIỆN TRẢ MÁY -->
+          <div class="p-4 bg-slate-50 rounded-xl border border-slate-200" id="ws-completion-card">
+            <details id="ws-completion-details" open class="group">
+              <summary class="flex items-center justify-between cursor-pointer list-none select-none text-slate-800 font-bold">
+                <span class="flex items-center gap-1.5">
+                  <i data-lucide="clipboard-check" class="w-4 h-4 text-emerald-600"></i> Điều kiện trả máy
+                </span>
+                <i data-lucide="chevron-down" class="w-4 h-4 text-slate-400 group-open:rotate-180 transition-transform"></i>
+              </summary>
+              <div id="ws-completion-list" class="space-y-1 mt-3"></div>
+              <div id="ws-completion-blockers" class="mt-2 text-xs text-amber-800 font-medium"></div>
+            </details>
+          </div>
+
+          <!-- LỊCH SỬ XỬ LÝ -->
+          <div class="p-4 bg-slate-50 rounded-xl border border-slate-200">
+            <div class="text-slate-800 font-bold mb-2 flex items-center gap-1.5">
+              <i data-lucide="history" class="w-4 h-4 text-indigo-600"></i> Lịch sử xử lý
             </div>
             <div id="modal-ticket-timeline" class="space-y-2 max-h-72 overflow-y-auto pr-1"></div>
-          </div>
-
-          <div class="rounded-xl border border-fuchsia-900/50 bg-slate-900/60 p-3">
-            <div class="flex items-center justify-between gap-2 mb-2">
-              <div class="text-xs font-semibold text-fuchsia-300 flex items-center gap-1.5">
-                <i data-lucide="wand-2" class="w-3.5 h-3.5"></i> Gợi ý loại lỗi (chỉ để tham khảo)
-              </div>
-              <button class="btn btn-secondary btn-sm" onclick="goToAiTab()">
-                <i data-lucide="arrow-up-right" class="w-3.5 h-3.5"></i> Mở rộng
-              </button>
-            </div>
-            <div id="modal-ai-body" class="text-xs text-slate-300">Chưa có kết quả gợi ý cho phiếu này.</div>
-          </div>
-
-          <div class="p-3 bg-slate-900/70 rounded-xl border border-slate-800">
-            <div class="text-slate-300 font-semibold mb-2 flex items-center gap-1.5">
-              <i data-lucide="clipboard-check" class="w-3.5 h-3.5 text-emerald-400"></i> Điều kiện hoàn tất phiếu
-            </div>
-            <div id="ws-completion-list" class="space-y-1"></div>
-            <div id="ws-completion-blockers" class="mt-2 text-[11px] text-amber-200/90"></div>
           </div>
         </div>
       </div>
@@ -921,21 +994,21 @@
   </div>
 
   <!-- ==================== MODAL: KHÁCH HÀNG ==================== -->
-  <div id="customer-modal" class="fixed inset-0 z-50 items-center justify-center bg-black/75 backdrop-blur-sm p-4" style="display:none">
-    <div class="glass-panel rounded-2xl border border-slate-700/80 max-w-lg w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
-      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg" onclick="closeModal('customer-modal')"><i data-lucide="x" class="w-5 h-5"></i></button>
-      <h3 class="text-lg font-bold text-white mb-4" id="customer-modal-title">Thêm khách hàng</h3>
+  <div id="customer-modal" class="fixed inset-0 z-50 items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" style="display:none">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
+      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="closeModal('customer-modal')" aria-label="Đóng"><i data-lucide="x" class="w-5 h-5"></i></button>
+      <h3 class="text-lg font-bold text-slate-900 mb-4" id="customer-modal-title">Thêm khách hàng</h3>
       <form id="customer-form" class="space-y-3 text-xs" novalidate>
         <input type="hidden" id="cust-id">
-        <p class="text-[11px] text-slate-500">Trường có dấu <span class="text-rose-400">*</span> là bắt buộc.</p>
+        <p class="text-xs text-slate-500">Trường có dấu <span class="text-rose-500">*</span> là bắt buộc.</p>
         <div>
-          <label class="form-label" for="cust-name">Họ và tên <span class="text-rose-400">*</span></label>
+          <label class="form-label" for="cust-name">Họ và tên <span class="text-rose-500">*</span></label>
           <input type="text" id="cust-name" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Ví dụ: Nguyễn Văn An">
           <span class="form-error hidden" id="err-cust-name"></span>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label class="form-label" for="cust-phone">Số điện thoại <span class="text-rose-400">*</span></label>
+            <label class="form-label" for="cust-phone">Số điện thoại <span class="text-rose-500">*</span></label>
             <input type="text" id="cust-phone" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Ví dụ: 0912345678">
             <span class="form-error hidden" id="err-cust-phone"></span>
           </div>
@@ -958,12 +1031,12 @@
   </div>
 
   <!-- ==================== MODAL: CHI TIẾT KHÁCH HÀNG ==================== -->
-  <div id="customer-detail-modal" class="fixed inset-0 z-50 items-center justify-center bg-black/75 backdrop-blur-sm p-4" style="display:none">
-    <div class="glass-panel rounded-2xl border border-slate-700/80 max-w-3xl w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
-      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg" onclick="closeModal('customer-detail-modal')"><i data-lucide="x" class="w-5 h-5"></i></button>
-      <h3 class="text-lg font-bold text-white mb-1 flex items-center gap-2"><i data-lucide="user-round" class="w-4 h-4 text-cyan-400"></i> <span id="customer-detail-title">Chi tiết khách hàng</span></h3>
-      <p class="text-xs text-slate-400 mb-4">Thông tin chủ sở hữu kèm toàn bộ thiết bị và phiếu bảo hành của khách trong hệ thống.</p>
-      <div id="customer-detail-body" class="text-xs text-slate-300 space-y-4"></div>
+  <div id="customer-detail-modal" class="fixed inset-0 z-50 items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" style="display:none">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-3xl w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
+      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="closeModal('customer-detail-modal')" aria-label="Đóng"><i data-lucide="x" class="w-5 h-5"></i></button>
+      <h3 class="text-lg font-bold text-slate-900 mb-1 flex items-center gap-2"><i data-lucide="user-round" class="w-5 h-5 text-cyan-600"></i> <span id="customer-detail-title">Chi tiết khách hàng</span></h3>
+      <p class="text-sm text-slate-500 mb-4">Thông tin chủ sở hữu kèm toàn bộ thiết bị và phiếu bảo hành của khách trong hệ thống.</p>
+      <div id="customer-detail-body" class="text-sm text-slate-700 space-y-4"></div>
       <div class="pt-4 flex justify-end">
         <button type="button" class="btn btn-secondary" onclick="closeModal('customer-detail-modal')">Đóng</button>
       </div>
@@ -971,15 +1044,15 @@
   </div>
 
   <!-- ==================== MODAL: SẢN PHẨM ==================== -->
-  <div id="product-modal" class="fixed inset-0 z-50 items-center justify-center bg-black/75 backdrop-blur-sm p-4" style="display:none">
-    <div class="glass-panel rounded-2xl border border-slate-700/80 max-w-lg w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
-      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg" onclick="closeModal('product-modal')"><i data-lucide="x" class="w-5 h-5"></i></button>
-      <h3 class="text-lg font-bold text-white mb-4" id="product-modal-title">Thêm dòng máy</h3>
+  <div id="product-modal" class="fixed inset-0 z-50 items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" style="display:none">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
+      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="closeModal('product-modal')" aria-label="Đóng"><i data-lucide="x" class="w-5 h-5"></i></button>
+      <h3 class="text-lg font-bold text-slate-900 mb-4" id="product-modal-title">Thêm dòng máy</h3>
       <form id="product-form" class="space-y-3 text-xs" novalidate>
         <input type="hidden" id="prod-id">
-        <p class="text-[11px] text-slate-500">Trường có dấu <span class="text-rose-400">*</span> là bắt buộc.</p>
+        <p class="text-xs text-slate-500">Trường có dấu <span class="text-rose-500">*</span> là bắt buộc.</p>
         <div>
-          <label class="form-label" for="prod-name">Tên máy (dòng máy) <span class="text-rose-400">*</span></label>
+          <label class="form-label" for="prod-name">Tên máy (dòng máy) <span class="text-rose-500">*</span></label>
           <input type="text" id="prod-name" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Ví dụ: Laptop Asus ROG Strix G16">
           <span class="form-error hidden" id="err-prod-name"></span>
         </div>
@@ -994,7 +1067,7 @@
           </div>
         </div>
         <div>
-          <label class="form-label" for="prod-months">Thời hạn bảo hành (tháng) <span class="text-rose-400">*</span></label>
+          <label class="form-label" for="prod-months">Thời hạn bảo hành (tháng) <span class="text-rose-500">*</span></label>
           <input type="number" id="prod-months" min="1" max="120" value="12" class="w-full glass-input px-3 py-2 rounded-xl text-sm">
           <span class="form-error hidden" id="err-prod-months"></span>
         </div>
@@ -1011,21 +1084,21 @@
   </div>
 
   <!-- ==================== MODAL: THIẾT BỊ ==================== -->
-  <div id="device-modal" class="fixed inset-0 z-50 items-center justify-center bg-black/75 backdrop-blur-sm p-4" style="display:none">
-    <div class="glass-panel rounded-2xl border border-slate-700/80 max-w-xl w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
-      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg" onclick="closeModal('device-modal')"><i data-lucide="x" class="w-5 h-5"></i></button>
-      <h3 class="text-lg font-bold text-white mb-4" id="device-modal-title">Thêm thiết bị</h3>
+  <div id="device-modal" class="fixed inset-0 z-50 items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" style="display:none">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-xl w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
+      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="closeModal('device-modal')" aria-label="Đóng"><i data-lucide="x" class="w-5 h-5"></i></button>
+      <h3 class="text-lg font-bold text-slate-900 mb-4" id="device-modal-title">Thêm thiết bị</h3>
       <form id="device-form" class="space-y-3 text-xs" novalidate>
         <input type="hidden" id="dev-id">
-        <p class="text-[11px] text-slate-500">Trường có dấu <span class="text-rose-400">*</span> là bắt buộc.</p>
+        <p class="text-xs text-slate-500">Trường có dấu <span class="text-rose-500">*</span> là bắt buộc.</p>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
-            <label class="form-label" for="dev-serial">Số sê-ri <span class="text-rose-400">*</span></label>
+            <label class="form-label" for="dev-serial">Số sê-ri <span class="text-rose-500">*</span></label>
             <input type="text" id="dev-serial" class="w-full glass-input px-3 py-2 rounded-xl text-sm font-mono" placeholder="Ví dụ: SN-ASUS-2026-0001">
             <span class="form-error hidden" id="err-dev-serial"></span>
           </div>
           <div>
-            <label class="form-label" for="dev-customer-id">Khách hàng (chủ sở hữu) <span class="text-rose-400">*</span></label>
+            <label class="form-label" for="dev-customer-id">Khách hàng (chủ sở hữu) <span class="text-rose-500">*</span></label>
             <select id="dev-customer-id" class="w-full glass-input px-3 py-2 rounded-xl text-sm">
               <option value="">-- Chọn khách hàng --</option>
             </select>
@@ -1033,11 +1106,11 @@
           </div>
         </div>
         <div>
-          <label class="form-label" for="dev-product-name">Dòng máy (tên sản phẩm) <span class="text-rose-400">*</span></label>
+          <label class="form-label" for="dev-product-name">Dòng máy (tên sản phẩm) <span class="text-rose-500">*</span></label>
           <input type="text" id="dev-product-name" list="list-product-names" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Chọn dòng máy có sẵn hoặc nhập tên mới">
           <datalist id="list-product-names"></datalist>
           <span class="form-error hidden" id="err-dev-product"></span>
-          <p class="text-[11px] text-slate-500 mt-1">Nếu tên chưa có trong danh mục, hệ thống tạo dòng máy mới theo thông tin bên dưới.</p>
+          <p class="text-xs text-slate-500 mt-1">Nếu tên chưa có trong danh mục, hệ thống tạo dòng máy mới theo thông tin bên dưới.</p>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
           <div>
@@ -1051,7 +1124,7 @@
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-3">
           <div>
-            <label class="form-label" for="dev-purchase-date">Ngày mua <span class="text-rose-400">*</span></label>
+            <label class="form-label" for="dev-purchase-date">Ngày mua <span class="text-rose-500">*</span></label>
             <input type="date" id="dev-purchase-date" class="w-full glass-input px-3 py-2 rounded-xl text-sm">
             <span class="form-error hidden" id="err-dev-purchase"></span>
           </div>
@@ -1062,8 +1135,8 @@
           </div>
           <div>
             <label class="form-label" for="dev-end-date">Hết hạn bảo hành</label>
-            <input type="date" id="dev-end-date" class="w-full glass-input px-3 py-2 rounded-xl text-sm bg-slate-900/60" readonly>
-            <p class="text-[11px] text-slate-500 mt-1">Tự tính từ ngày mua + thời hạn.</p>
+            <input type="date" id="dev-end-date" class="w-full glass-input px-3 py-2 rounded-xl text-sm bg-slate-100 text-slate-600" readonly>
+            <p class="text-xs text-slate-500 mt-1">Tự tính từ ngày mua + thời hạn.</p>
           </div>
         </div>
         <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -1087,16 +1160,12 @@
     </div>
   </div>
 
-
-
-
-
   <!-- ==================== MODAL: CHI TIẾT THIẾT BỊ ==================== -->
-  <div id="device-detail-modal" class="fixed inset-0 z-50 items-center justify-center bg-black/75 backdrop-blur-sm p-4" style="display:none">
-    <div class="glass-panel rounded-2xl border border-slate-700/80 max-w-2xl w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
-      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-white p-1 rounded-lg" onclick="closeModal('device-detail-modal')"><i data-lucide="x" class="w-5 h-5"></i></button>
+  <div id="device-detail-modal" class="fixed inset-0 z-50 items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" style="display:none">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-2xl w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
+      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="closeModal('device-detail-modal')" aria-label="Đóng"><i data-lucide="x" class="w-5 h-5"></i></button>
 
-      <h3 class="text-lg font-bold text-white font-mono mb-1" id="dev-detail-serial">–</h3>
+      <h3 class="text-xl font-bold text-slate-900 font-mono mb-1" id="dev-detail-serial">–</h3>
       <div id="dev-detail-status" class="mb-4"></div>
 
       <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs mb-4" id="dev-detail-info"></div>
@@ -1104,11 +1173,12 @@
       <div id="dev-detail-check" class="hidden mb-4"></div>
 
       <div class="mb-4">
-        <div class="text-xs font-semibold text-slate-300 mb-2">Phiếu bảo hành của thiết bị này</div>
+        <div class="text-sm font-semibold text-slate-800 mb-2">Phiếu bảo hành của thiết bị này</div>
         <div id="dev-detail-tickets" class="space-y-2"></div>
       </div>
 
       <div class="flex flex-wrap justify-end gap-2">
+        <button class="btn btn-secondary" onclick="showDeviceAiHistory()"><i data-lucide="sparkles" class="w-4 h-4 text-purple-600"></i> Tóm tắt lịch sử (AI)</button>
         <button class="btn btn-secondary" onclick="runDeviceWarrantyCheck()"><i data-lucide="search-check" class="w-4 h-4"></i> Kiểm tra bảo hành</button>
         <button class="btn btn-secondary" data-perm="device.manage" onclick="editDeviceFromDetail()"><i data-lucide="pencil" class="w-4 h-4"></i> Sửa thiết bị</button>
         <button class="btn btn-primary" data-perm="ticket.create" onclick="createTicketForDevice()"><i data-lucide="file-plus-2" class="w-4 h-4"></i> Tạo phiếu bảo hành</button>
@@ -1117,10 +1187,10 @@
   </div>
 
   <!-- ==================== MODAL: XÁC NHẬN THAO TÁC ==================== -->
-  <div id="action-modal" class="fixed inset-0 z-[60] items-center justify-center bg-black/80 backdrop-blur-sm p-4" style="display:none">
-    <div class="glass-panel rounded-2xl border border-slate-700/80 max-w-lg w-full p-6 shadow-2xl max-h-[92vh] overflow-y-auto">
-      <h3 class="text-base font-bold text-white mb-2" id="action-modal-title">Xác nhận</h3>
-      <p class="text-sm text-slate-300 mb-3" id="action-modal-message"></p>
+  <div id="action-modal" class="fixed inset-0 z-[60] items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" style="display:none">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-6 shadow-2xl max-h-[92vh] overflow-y-auto">
+      <h3 class="text-base font-bold text-slate-900 mb-2" id="action-modal-title">Xác nhận</h3>
+      <p class="text-sm text-slate-600 mb-3" id="action-modal-message"></p>
       <div id="action-modal-select-wrap" class="hidden mb-3">
         <label class="form-label" for="action-modal-select" id="action-modal-select-label">Người thực hiện</label>
         <select id="action-modal-select" class="w-full glass-input px-3 py-2 rounded-xl text-sm"></select>
@@ -1134,14 +1204,106 @@
     </div>
   </div>
 
-  <footer class="border-t border-slate-800/80 py-4 text-center text-[11px] text-slate-500">
-    BaoHanhAI &bull; Hệ thống quản lý bảo hành sản phẩm &bull; Nhóm 6
+  <!-- ==================== MODAL: TÓM TẮT LỊCH SỬ BẢO HÀNH (AI) ==================== -->
+  <div id="ai-summary-modal" class="fixed inset-0 z-[70] items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" style="display:none">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
+      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="closeModal('ai-summary-modal')" aria-label="Đóng"><i data-lucide="x" class="w-5 h-5"></i></button>
+      <div class="flex items-center gap-2 mb-2">
+        <i data-lucide="sparkles" class="w-5 h-5 text-purple-600"></i>
+        <h3 class="text-base font-bold text-slate-900">Tóm tắt lịch sử bảo hành</h3>
+      </div>
+      <p class="text-xs text-slate-500 mb-3">Nội dung được AI gợi ý, cần kiểm tra trước khi sử dụng.</p>
+      <div id="ai-summary-content" class="p-4 bg-slate-50 rounded-xl border border-slate-200 text-sm text-slate-800 leading-relaxed">
+        Đang tải tóm tắt...
+      </div>
+      <div class="pt-4 flex justify-end">
+        <button type="button" class="btn btn-secondary" onclick="closeModal('ai-summary-modal')">Đóng</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: SOẠN THÔNG BÁO TIẾN ĐỘ (AI) ==================== -->
+  <div id="ai-notification-modal" class="fixed inset-0 z-[70] items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" style="display:none">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
+      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="closeModal('ai-notification-modal')" aria-label="Đóng"><i data-lucide="x" class="w-5 h-5"></i></button>
+      <div class="flex items-center gap-2 mb-2">
+        <i data-lucide="message-square" class="w-5 h-5 text-indigo-600"></i>
+        <h3 class="text-base font-bold text-slate-900">Soạn thông báo tiến độ</h3>
+      </div>
+      <p class="text-xs text-slate-500 mb-2">Nội dung được AI gợi ý, cần kiểm tra trước khi sử dụng. Nhân viên có thể chỉnh sửa trước khi sao chép gửi cho khách.</p>
+      <div class="mb-3 text-xs text-slate-600">
+        Khách hàng nhận: <span class="font-semibold text-slate-900" id="ai-noti-recipient">–</span>
+      </div>
+      <div class="space-y-2">
+        <textarea id="ai-noti-textarea" rows="6" class="w-full glass-input px-3 py-2 rounded-xl text-sm leading-relaxed border border-slate-300 focus:border-indigo-500"></textarea>
+      </div>
+      <div class="pt-3 flex justify-between items-center gap-2">
+        <span id="ai-noti-copy-status" class="text-xs text-emerald-600 font-medium"></span>
+        <div class="flex gap-2">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('ai-notification-modal')">Đóng</button>
+          <button type="button" class="btn btn-primary" onclick="copyNotificationText()"><i data-lucide="copy" class="w-4 h-4"></i> Sao chép tin nhắn</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ==================== MODAL: THÊM TÀI KHOẢN (QUẢN LÝ) ==================== -->
+  <div id="user-modal" class="fixed inset-0 z-50 items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4" style="display:none">
+    <div class="bg-white rounded-2xl border border-slate-200 max-w-lg w-full p-6 shadow-2xl relative max-h-[92vh] overflow-y-auto">
+      <button type="button" class="absolute top-4 right-4 text-slate-400 hover:text-slate-700 p-1.5 rounded-lg hover:bg-slate-100 transition-colors" onclick="closeModal('user-modal')" aria-label="Đóng"><i data-lucide="x" class="w-5 h-5"></i></button>
+      <h3 class="text-lg font-bold text-slate-900 mb-4" id="user-modal-title">Thêm tài khoản nhân viên</h3>
+      <form id="user-form" class="space-y-3 text-xs" novalidate>
+        <div>
+          <label class="form-label" for="usr-username">Tên đăng nhập <span class="text-rose-500">*</span></label>
+          <input type="text" id="usr-username" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Ví dụ: hoangnam">
+          <span class="form-error hidden" id="err-usr-username"></span>
+        </div>
+        <div>
+          <label class="form-label" for="usr-password">Mật khẩu khởi tạo <span class="text-rose-500">*</span></label>
+          <input type="password" id="usr-password" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Tối thiểu 6 ký tự (Ví dụ: 123456)">
+          <span class="form-error hidden" id="err-usr-password"></span>
+        </div>
+        <div>
+          <label class="form-label" for="usr-fullname">Họ và tên nhân viên <span class="text-rose-500">*</span></label>
+          <input type="text" id="usr-fullname" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="Ví dụ: Hoàng Đức Việt">
+          <span class="form-error hidden" id="err-usr-fullname"></span>
+        </div>
+        <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+          <div>
+            <label class="form-label" for="usr-role">Vai trò <span class="text-rose-500">*</span></label>
+            <select id="usr-role" class="w-full glass-input px-3 py-2 rounded-xl text-sm">
+              <option value="RECEPTIONIST">Nhân viên tiếp nhận</option>
+              <option value="TECHNICIAN">Kỹ thuật viên</option>
+              <option value="MANAGER">Quản lý</option>
+            </select>
+          </div>
+          <div>
+            <label class="form-label" for="usr-phone">Số điện thoại</label>
+            <input type="text" id="usr-phone" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="0901234567">
+          </div>
+        </div>
+        <div>
+          <label class="form-label" for="usr-email">Email</label>
+          <input type="email" id="usr-email" class="w-full glass-input px-3 py-2 rounded-xl text-sm" placeholder="nhanvien@baohanhai.vn">
+        </div>
+        <div class="pt-2 flex justify-end gap-2">
+          <button type="button" class="btn btn-secondary" onclick="closeModal('user-modal')">Huỷ</button>
+          <button type="submit" class="btn btn-primary"><i data-lucide="save" class="w-4 h-4"></i> Tạo tài khoản</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <footer class="border-t border-slate-200/60 py-3 text-center text-xs text-slate-400 bg-transparent">
+    BaoHanhAI &copy; 2026 &bull; Phần mềm quản lý bảo hành
   </footer>
 
-  </div>
-  <!-- ================= HẾT KHỐI ỨNG DỤNG (cần đăng nhập mới hiển thị) ================= -->
+    </div> <!-- /#main-wrapper -->
+  </div> <!-- /#app-shell -->
+  <!-- ================= HẾT KHỐI ỨNG DỤNG ================= -->
 
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20261028_final"></script>
+  <script src="/static/support.js"></script>
 </body>
 </html>
 

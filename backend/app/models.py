@@ -150,11 +150,20 @@ class ProductInstance(Base):
 class WarrantyTicket(Base):
     """Phiếu bảo hành.
 
-    Vòng đời 6 trạng thái (nguồn sự thật: `app.services.warranty_rules.ALLOWED_TRANSITIONS`):
-    RECEIVED (Mới tiếp nhận) -> INSPECTING (Đang kiểm tra) -> REPAIRING (Đang sửa chữa)
-    -> WAITING_RETURN (Chờ trả máy) -> COMPLETED (Đã hoàn tất).
-    Nhánh từ chối: INSPECTING -> REJECTED (Từ chối bảo hành).
-    Bắt buộc đi qua WAITING_RETURN trước khi đóng phiếu ở COMPLETED.
+    Vòng đời nghiệp vụ chuẩn:
+    - Luồng sửa chữa:
+      RECEIVED (Tiếp nhận) -> INSPECTING (Kiểm tra) -> REPAIRING (Sửa chữa)
+      -> COMPLETED (Hoàn tất) -> RETURNED (Đã trả máy).
+    - Luồng từ chối:
+      INSPECTING (Kiểm tra) -> REJECTED (Từ chối) -> RETURNED (Đã trả máy).
+
+    Ý nghĩa:
+    - RECEIVED (Tiếp nhận): đã nhận máy và lập phiếu.
+    - INSPECTING (Kiểm tra): kỹ thuật viên đang kiểm tra, xác định lỗi và điều kiện bảo hành.
+    - REPAIRING (Sửa chữa): đang thực hiện sửa chữa.
+    - COMPLETED (Hoàn tất): sửa xong, đã kiểm tra kết quả, đang chờ khách nhận.
+    - REJECTED (Từ chối): quản lý xác nhận không tiếp nhận sửa theo bảo hành, có lý do, đang chờ trả máy.
+    - RETURNED (Đã trả máy): đã bàn giao cho khách, đóng phiếu.
     """
 
     __tablename__ = "warranty_tickets"
@@ -166,41 +175,54 @@ class WarrantyTicket(Base):
     service_center_id = Column(BigInteger, ForeignKey("service_centers.id", ondelete="RESTRICT"), nullable=False)
     created_by = Column(BigInteger, ForeignKey("users.id", ondelete="RESTRICT"), nullable=False)
     issue_description = Column(Text, nullable=False)
+    device_condition = Column(Text, nullable=True)           # Ngoại quan / tình trạng máy khi nhận
+    accessories_accompanying = Column(Text, nullable=True)   # Phụ kiện nhận kèm
     error_category_id = Column(BigInteger, ForeignKey("error_categories.id", ondelete="SET NULL"), nullable=True)
-    status = Column(String(20), nullable=False, default="RECEIVED")  # RECEIVED, INSPECTING, REPAIRING, WAITING_RETURN, COMPLETED, REJECTED
-    rejection_reason = Column(Text, nullable=True)
-    rejection_proposed_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    rejection_proposed_at = Column(DateTime, nullable=True)
-    rejection_reviewed_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
-    rejection_reviewed_at = Column(DateTime, nullable=True)
-    rejection_review_status = Column(String(20), nullable=True)  # PENDING, APPROVED, DECLINED
-    handed_over_at = Column(DateTime, nullable=True)
-    # =================================================================
-    # [Đợt hoàn thiện nghiệp vụ phiếu] Thông tin xử lý thực tế của phiếu
-    # -----------------------------------------------------------------
-    # Nguyên tắc: KHÔNG trộn 3 nguồn thông tin vào một câu.
-    #   1. Khách hàng mô tả  -> warranty_tickets.issue_description
-    #   2. Hệ thống/AI gợi ý -> bảng ai_results (không ghi kết luận vào phiếu)
-    #   3. Kỹ thuật viên kết luận -> diagnosis_* (chẩn đoán) và repair_* (sửa chữa)
-    # Nội dung bàn giao cho khách -> handover_note + handed_over_by/at.
-    # Các cột này KHÔNG thay thế ticket_status_history (lịch sử trạng thái).
-    # =================================================================
+    status = Column(String(20), nullable=False, default="RECEIVED")  # RECEIVED, INSPECTING, REPAIRING, COMPLETED, REJECTED, RETURNED
+    
+    # Phân công kỹ thuật viên phụ trách phiếu
+    assigned_technician_id = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    assigned_at = Column(DateTime, nullable=True)
+
+    # Chẩn đoán & xác định điều kiện bảo hành
     diagnosis_note = Column(Text, nullable=True)             # Kết luận chẩn đoán của kỹ thuật viên
     diagnosis_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     diagnosis_at = Column(DateTime, nullable=True)
+    is_warranty_eligible = Column(Boolean, nullable=True)    # Kết quả xác định đủ điều kiện bảo hành
+    warranty_check_note = Column(Text, nullable=True)        # Ghi chú xác định điều kiện bảo hành
+
+    # Nghiệp vụ sửa chữa & kiểm tra sau sửa
     repair_content = Column(Text, nullable=True)             # Nội dung đã kiểm tra / đã sửa
     repair_parts = Column(Text, nullable=True)               # Linh kiện / thành phần đã thay
     repair_note = Column(Text, nullable=True)                # Ghi chú kỹ thuật khi sửa chữa
     repair_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
     repair_at = Column(DateTime, nullable=True)              # Thời điểm hoàn thành sửa chữa
+    repair_test_passed = Column(Boolean, nullable=True)      # Kết quả kiểm tra sau sửa đạt yêu cầu
+    repair_test_note = Column(Text, nullable=True)           # Ghi chú kiểm tra sau sửa
+
+    # Nhánh từ chối bảo hành
+    rejection_reason = Column(Text, nullable=True)
+    rejection_proposed_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    rejection_proposed_at = Column(DateTime, nullable=True)
+    rejection_proposal_note = Column(Text, nullable=True)    # Đề xuất & bằng chứng kiểm tra của KTV
+    rejection_reviewed_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    rejection_reviewed_at = Column(DateTime, nullable=True)
+    rejection_review_status = Column(String(20), nullable=True)  # PENDING, APPROVED, DECLINED
+
+    # Bàn giao trả máy & Đóng phiếu
+    completed_at = Column(DateTime, nullable=True)           # Mốc hoàn tất sửa chữa (chờ trả máy)
     handed_over_by = Column(BigInteger, ForeignKey("users.id", ondelete="SET NULL"), nullable=True)
+    handed_over_at = Column(DateTime, nullable=True)         # Thời điểm bàn giao trả máy cho khách
     handover_note = Column(Text, nullable=True)              # Ghi chú khi bàn giao máy cho khách
+    resolution = Column(String(20), nullable=True)           # Kết quả lưu vết khi đóng: 'COMPLETED' (Sửa hoàn tất) hoặc 'REJECTED' (Từ chối)
+
     created_at = Column(DateTime, default=datetime.utcnow)
     updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     __table_args__ = (
-        CheckConstraint("status IN ('RECEIVED', 'INSPECTING', 'REPAIRING', 'WAITING_RETURN', 'COMPLETED', 'REJECTED')", name="check_ticket_status"),
+        CheckConstraint("status IN ('RECEIVED', 'INSPECTING', 'REPAIRING', 'COMPLETED', 'REJECTED', 'RETURNED')", name="check_ticket_status"),
         CheckConstraint("rejection_review_status IS NULL OR rejection_review_status IN ('PENDING', 'APPROVED', 'DECLINED')", name="check_rejection_review_status"),
+        CheckConstraint("resolution IS NULL OR resolution IN ('COMPLETED', 'REJECTED')", name="check_ticket_resolution"),
     )
 
     product_instance = relationship("ProductInstance", back_populates="warranty_tickets")
@@ -208,9 +230,9 @@ class WarrantyTicket(Base):
     service_center = relationship("ServiceCenter", back_populates="warranty_tickets")
     error_category = relationship("ErrorCategory", back_populates="warranty_tickets")
     creator = relationship("User", foreign_keys=[created_by])
+    assigned_technician = relationship("User", foreign_keys=[assigned_technician_id])
     rejection_proposer = relationship("User", foreign_keys=[rejection_proposed_by])
     rejection_reviewer = relationship("User", foreign_keys=[rejection_reviewed_by])
-    # Người kết luận chẩn đoán / người sửa chữa / người trả máy (phục vụ hiển thị chi tiết phiếu)
     diagnosis_user = relationship("User", foreign_keys=[diagnosis_by])
     repair_user = relationship("User", foreign_keys=[repair_by])
     handover_user = relationship("User", foreign_keys=[handed_over_by])
@@ -319,6 +341,14 @@ class AIResult(Base):
 #   * chat_messages.content CHỈ lưu bản đã khử PII (sanitize_pii của KT3).
 #   * Các cột JSON dùng để lưu vết: citations, tool_args, guardrail_flags, token_usage.
 # =====================================================================
+
+
+class TicketLookupCredential(Base):
+    """One revocable customer capability per ticket; plaintext is never persisted."""
+    __tablename__ = "ticket_lookup_credentials"
+    ticket_id = Column(PK_ID, ForeignKey("warranty_tickets.id", ondelete="CASCADE"), primary_key=True)
+    token_hash = Column(String(64), nullable=False)
+    expires_at = Column(DateTime, nullable=False)
 
 
 class KBDocument(Base):

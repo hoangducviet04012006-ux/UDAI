@@ -79,8 +79,9 @@ function check(name, condition, extra) {
 }
 
 // 1. Nhãn trạng thái hiển thị tiếng Việt, không lộ enum
-check("statusLabel(WAITING_RETURN) = 'Chờ trả máy'",
-  sandbox.statusLabel("WAITING_RETURN") === "Chờ trả máy", sandbox.statusLabel("WAITING_RETURN"));
+check("statusLabel(RETURNED) = 'Đã trả máy' & statusLabel(COMPLETED) = 'Hoàn tất'",
+  sandbox.statusLabel("RETURNED") === "Đã trả máy" && sandbox.statusLabel("COMPLETED") === "Hoàn tất",
+  `${sandbox.statusLabel("RETURNED")}, ${sandbox.statusLabel("COMPLETED")}`);
 
 // 2. Thông báo lỗi ưu tiên `message` tiếng Việt của backend (không lộ mã kỹ thuật)
 const errMsg = sandbox.errorMessage(400, {
@@ -198,7 +199,7 @@ sandbox.renderDashCards([
 const cardsHtml = getEl("dash-cards").innerHTML;
 check("renderDashCards vẽ thẻ số liệu theo vai trò + bấm được",
   cardsHtml.indexOf("Mới tiếp nhận") !== -1 && cardsHtml.indexOf("3") !== -1 &&
-  cardsHtml.indexOf("openTicketsFiltered('RECEIVED')") !== -1,
+  (cardsHtml.indexOf("onDashCardClick('RECEIVED')") !== -1 || cardsHtml.indexOf("openTicketsFiltered('RECEIVED')") !== -1),
   cardsHtml.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim().slice(0, 140));
 
 // 5d. Bảng điều khiển: mỗi dòng phiếu có đúng 1 hành động chính theo trạng thái + quyền

@@ -4,21 +4,48 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 from app.config import settings, BASE_DIR
-from app.database import engine, Base
+import app.database as app_db
+from app.database import Base
 import app.models  # Đảm bảo tất cả 11 model được nạp trước khi create_all
 from app.services.schema_migration import ensure_schema_upgrades
+from app.services.support_schema import backup_before_support_schema
+from app.services.auth_service import ensure_demo_accounts_configured
 from app.services.warranty_rules import BusinessRuleError
-from app.routers import products, customers, warranty_tickets, debug, product_instances, ai, auth, users
+from app.routers import products, customers, warranty_tickets, debug, product_instances, ai, auth, users, chatbot
+
+
+def __getattr__(name: str):
+    """Ủy quyền động engine và SessionLocal sang app.database để tránh giữ tham chiếu cũ khi test cách ly."""
+    if name in ("engine", "SessionLocal"):
+        return getattr(app_db, name)
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Lấy engine và SessionLocal động từ app.database để đảm bảo khi test
+    # chạy trên CSDL tạm và override engine/SessionLocal, lifespan KHÔNG BAO GIỜ chạm vào CSDL thật.
+    active_engine = app_db.engine
+    active_session_maker = app_db.SessionLocal
+
     # Khởi tạo toàn bộ 11 bảng nếu chưa tồn tại
-    Base.metadata.create_all(bind=engine)
+    backup_before_support_schema(active_engine)
+    Base.metadata.create_all(bind=active_engine)
     # [Đợt hoàn thiện nghiệp vụ] Thêm các cột nghiệp vụ phiếu còn thiếu vào CSDL đang dùng
     # (chỉ ADD COLUMN, KHÔNG xoá/đổi cột cũ -> dữ liệu hiện có không bị hỏng)
-    added = ensure_schema_upgrades(engine)
+    added = ensure_schema_upgrades(active_engine)
     if added:
         print(f"[schema] Da bo sung {len(added)} cot nghiep vu phieu: {', '.join(added)}")
+
+    # [Khắc phục đăng nhập CSDL cũ] Nâng cấp tài khoản demo có hash giả sang PBKDF2 chuẩn
+    # (chỉ nâng cấp bản ghi có hash giả, không chạm mật khẩu người dùng đã đổi)
+    try:
+        with active_session_maker() as db:
+            upgraded_accounts = ensure_demo_accounts_configured(db)
+            if upgraded_accounts:
+                print(f"[auth] Da nang cap mat khau cho {upgraded_accounts} tai khoan demo tu CSDL cu.")
+    except Exception as exc:
+        print(f"[auth] Canh bao kiem tra tai khoan demo: {exc}")
     yield
 
 app = FastAPI(
@@ -31,8 +58,9 @@ app = FastAPI(
     * **CRUD Danh mục & Sản phẩm** (`products`)
     * **CRUD Khách hàng** (`customers`)
     * **CRUD & Quy trình Tiếp nhận Phiếu bảo hành** (`warranty_tickets`)
-    * **Ràng buộc nghiệp vụ nghiêm ngặt**: BR1 (Tồn tại Serial), BR2 (Còn hạn BH), BR3 (Không trùng phiếu mở), BR4 (Khớp chủ sở hữu)
-    * **Quản lý chuyển trạng thái theo State Machine (6 trạng thái)**: RECEIVED -> INSPECTING -> REPAIRING -> WAITING_RETURN -> COMPLETED (hoặc INSPECTING -> REJECTED); bắt buộc đi qua WAITING_RETURN trước khi hoàn tất
+    * **Quản lý chuyển trạng thái theo State Machine (6 trạng thái)**:
+      - Luồng sửa chữa: TIẾP NHẬN (RECEIVED) -> KIỂM TRA (INSPECTING) -> SỬA CHỮA (REPAIRING) -> HOÀN TẤT (COMPLETED) -> ĐÃ TRẢ MÁY (RETURNED).
+      - Luồng từ chối: KIỂM TRA (INSPECTING) -> TỪ CHỐI (REJECTED) -> ĐÃ TRẢ MÁY (RETURNED).
     * **Debug kiểm tra hạn bảo hành BR2** (Nội dung KT2)
     * **AI-01: Gợi ý phân loại lỗi bảo hành** + Human-in-the-loop review (`ai`) - Nội dung KT3
     """,
@@ -98,17 +126,39 @@ app.include_router(customers.router)
 app.include_router(warranty_tickets.router)
 app.include_router(debug.router)
 app.include_router(ai.router)
+app.include_router(chatbot.router)
+
+@app.get('/support', include_in_schema=False)
+def support_page():
+    return FileResponse(os.path.join(BASE_DIR, 'frontend', 'support.html'))
 
 # Phục vụ giao diện web trong frontend/ (cấu trúc mới: frontend/ tách khỏi backend/)
 STATIC_DIR = os.path.join(BASE_DIR, "frontend")
 os.makedirs(STATIC_DIR, exist_ok=True)
+
+# Đảm bảo trình duyệt luôn tải file HTML, JS, CSS mới nhất, không dùng cache cũ
+@app.middleware("http")
+async def add_no_cache_headers(request: Request, call_next):
+    response = await call_next(request)
+    path = request.url.path
+    if path in ("/", "/support") or path.startswith(("/static", "/api/v1/chatbot")):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
 app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 @app.get("/", tags=["Giao diện Web"])
 def web_index():
     index_file = os.path.join(STATIC_DIR, "index.html")
     if os.path.exists(index_file):
-        return FileResponse(index_file)
+        response = FileResponse(index_file)
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+        response.headers["Expires"] = "0"
+        return response
     return {
         "app_name": settings.app_name,
         "version": settings.app_version,
